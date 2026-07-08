@@ -78,8 +78,12 @@ Offline gates all green (luacheck 0, unit 66/66, integration 32/32, SQL checker 
 - Integration harness is now **41** assertions (added 2 NPC-cooldown + 7 command tests).
 
 ### Handoff state / next steps
-- Committed to `main` (local). **Not pushed** — owner pushes (see the commit + exact
-  push/deploy commands in the handoff message / README).
-- Owner to: confirm engine build; import SQL + run `verify_ids.sql`; deploy `scripts/inc/`;
-  reload; run the in-game matrix; report `.inm stats`.
+- **Pushed** the module commit `60dfc9e` to `origin/main` (github.com/rzm25/immersive-npc).
+  The CI workflow is a SEPARATE local commit `5558460` that could NOT be pushed — the
+  provided PAT lacks the `workflow` scope. Owner must push it with a workflow-scoped token
+  (`git push origin 5558460:main`) or add `.github/workflows/build.yml` via the GitHub web UI.
+- Owner to: confirm engine build (S1); import SQL + run `verify_ids.sql`; deploy `scripts/inc/`
+  to the Lua dir; `.reload eluna`; check the boot summary line; run the in-game matrix
+  (TESTPLAN); report `.inm stats`.
 - `/source/ID_RANGES.md`: reserved **9506xx** for this module (snapshot taken first).
+  `/source/AZEROTHCORE_GOTCHAS.md`: added #15 (Eluna/ALE facts) — snapshot taken first.
