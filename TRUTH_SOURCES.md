@@ -1,0 +1,48 @@
+# TRUTH_SOURCES — immersive-npc at-a-glance
+
+Module-specific values this module owns (cross-project truth lives in
+`/workspaces/sandyb/source`). If this and any other doc disagree, one has drifted — fix
+it and note it in `agent-notes/`.
+
+## Identity
+- **Module:** `lua-immersive-npc-chat` — immersive, context-aware NPC ambience chat.
+- **Repo:** `github.com/rzm25/immersive-npc` (working dir `/workspaces/sandyb/immersive-npc`).
+- **Engine:** Eluna / ALE, Lua 5.2 (pins in [docs/SOURCES.md](docs/SOURCES.md)). Lua-only — no C++ build, no loader symbol.
+- **Reserved ID block:** **9506xx** (`/source/ID_RANGES.md`). v1 uses **no** custom
+  creature/spell/quest IDs — it profiles STOCK creatures. Block held for future custom NPCs (e.g. a Town Crier).
+
+## Custom tables (world DB) — full schema in `sql/world/base/inc_base.sql`
+- `immersive_npc_chat_location` — hubs. PK `id` (< 32). map/zone/area + pacing caps.
+- `immersive_npc_chat_npc_profile` — profiled creature entries → role mask, speak distance, whisper flag.
+- `immersive_npc_chat_line` — content rows → masks + cooldown group + weight + chat mode + text.
+
+## Config keys
+- Live in `scripts/inc/01_inc_config.lua` as `INC.Config` (no `.conf`). Clamped by `INC.ClampConfig()`.
+  Names mirror the C++ module's keys. Full list in [README.md](README.md#configuration).
+
+## Seeded content (operator-tunable — verify with `sql/verify_ids.sql`)
+- **Locations 1–6:** Stormwind(zone 1519,map0) Ironforge(1537,0) Darnassus(1657,1) Orgrimmar(1637,1) ThunderBluff(1638,1) Undercity(1497,0).
+- **Guard profiles (role GUARD, `role_mask_lo=1`):** entries 68 / 5595 / 4262 / 3296 / 3084 / 5624 (SW/IF/DARN/ORG/TB/UC). **Verify each in `creature_template`.**
+- **36 chat lines**, cooldown groups 1 greeting · 2 equipment · 3 class · 4 faction/place · 5 warning · 6 gesture.
+
+## Where each behaviour lives (`scripts/inc/`)
+| File | Responsibility |
+|---|---|
+| `01_inc_config.lua` | `INC.Config`, `ClampConfig`, log shims (`Log/Warn/Err/DebugLog`), `Protect`/`ProtectRet` (pcall wrappers) |
+| `02_inc_util.lua` | **engine-free**: all bit constants, `Mask64*`/`MatchAny*/MatchAll64`, token bucket, `WeightedPick`, `PopulationPerMinute`, `ReplacePlaceholders`, `TruncateBytes` |
+| `03_inc_data.lua` | `WorldDBQuery` loaders (ONLY here), validation+skip, prebuilt `LinesByLocation`/`NpcProfilesByEntry`, `Load()` (atomic-swap caches), `ResolveLocation`, `FindProfile` |
+| `04_inc_registry.lua` | per-entry ON_ADD/ON_REMOVE (36/37), `Registry[loc][guidLow]`, `RegistryIndex`, `Registry.Init/ForLocation` |
+| `05_inc_players.lua` | player events 3/4/27/47, `PlayerTrack`/`LocationState`, `ScanEquipment` (lazy 19-slot scan → tags+quality+weaponType) |
+| `06_inc_scheduler.lua` | `NowMs`, metrics, buckets, cooldowns, `attemptBody` pipeline, final validation, emission, `RunAttempt`, `ClearCooldowns`, heartbeat `CreateLuaEvent` |
+| `07_inc_commands.lua` | `.inm` command set via event 42 |
+| `08_inc_main.lua` | `INC.Boot()` (wire everything, boot summary), `INC.Reload()`, config-load survival (9), state-close cleanup (16) |
+
+## Runtime state (all under `INC.State`, memory-only, reset on script reload)
+`Registry` / `RegistryIndex` / `RegistryCount`; `PlayerTrack` / `LocationState`;
+`Metrics`; `GlobalBucket` / `GlobalLastEmitMs`; `LocPacing[loc]` (bucket + emit ring);
+`LineCooldown[id]` / `GroupCooldown[group]`; `schedulerEventId`. Persistent on `INC`:
+`schedulerEventId` (for teardown), `Caches` (immutable, swapped whole on reload).
+
+## Tooling
+- `tools/check_sql.py` (+ `check_sql_selftest.py`) — structural SQL checker, negative-tested (no `mysql` in sandbox).
+- `tests/run_tests.lua` (unit), `tests/integration_mock.lua` (offline mock-engine integration).
