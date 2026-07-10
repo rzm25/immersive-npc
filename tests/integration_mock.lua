@@ -215,6 +215,8 @@ local hero = makePlayer({
   equip = {
     [4] = makeItem(4, 4, 20, 4),   -- chest: armor/plate/epic  -> PLATE + quality EPIC(4)
     [15] = makeItem(2, 7, 21, 3),  -- mainhand: weapon/sword/1H -> HAS_WEAPON+SWORD
+    [16] = makeItem(4, 6, 14, 3),  -- offhand: armor/shield -> HAS_SHIELD (regression: off-hand branch)
+    [18] = makeItem(4, 0, 19, 1),  -- tabard slot -> TABARD
   },
 })
 playerEvents[3](3, hero)  -- ON_LOGIN
@@ -234,6 +236,9 @@ do
   ok(wt == "sword", "scan: weapon_type derived = sword")
   ok(INC.Util.MatchAll64(lo, hi, INC.Util.BitFor(INC.ItemTagPos.PLATE)), "scan: PLATE tag set from chest")
   ok(INC.Util.MatchAll64(lo, hi, INC.Util.BitFor(INC.ItemTagPos.SWORD)), "scan: SWORD tag set from mainhand")
+  ok(INC.Util.MatchAll64(lo, hi, INC.Util.BitFor(INC.ItemTagPos.HAS_SHIELD)),
+     "scan: HAS_SHIELD from off-hand (regression for the nil-TAG.SHIELD crash)")
+  ok(INC.Util.MatchAll64(lo, hi, INC.Util.BitFor(INC.ItemTagPos.TABARD)), "scan: TABARD set")
 end
 
 -- ---- forced emission -------------------------------------------------------

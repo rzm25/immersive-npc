@@ -96,7 +96,6 @@ function INC.Players.ScanEquipment(player)
         elseif iclass == ITEM_CLASS_ARMOR and slot == SLOT_OFFHAND
             and item:GetSubClass() == ARMOR_SUBCLASS_SHIELD then
           lo, hi = U.SetBit64(lo, hi, TAG.HAS_SHIELD)
-          lo, hi = U.SetBit64(lo, hi, TAG.SHIELD)
         elseif slot == SLOT_OFFHAND and item:GetInventoryType() == INVTYPE_HELD_IN_OFFHAND then
           lo, hi = U.SetBit64(lo, hi, TAG.OFFHAND_FRILL)
         end
