@@ -107,8 +107,12 @@ local function selectLocation(cfg, now, forced)
       local ok = true
       if not forced then
         local pacing = locPacing(loc.id)
-        local floorMs = math.max(loc.minIntervalMs, cfg.LocationMinIntervalMs)
-        local cap = math.min(loc.maxLinesPer10Min, cfg.LocationMaxLinesPer10Min)
+        -- Per-location pacing is taken straight from the DB row (immersive_npc_chat_location):
+        -- min_interval_ms and max_lines_per_10min are the authoritative per-city knobs, so
+        -- an operator's `.inm reload` after editing them takes effect. The server-wide
+        -- throttle is the config Global* gate, applied separately in attemptBody.
+        local floorMs = loc.minIntervalMs
+        local cap = loc.maxLinesPer10Min
         if now - pacing.lastEmitMs < floorMs then
           ok = false
         elseif countRecent(pacing.emitTimes, now, 600000) >= cap then
@@ -142,32 +146,11 @@ local function selectLocation(cfg, now, forced)
   return sLoc[math.random(1, n)], nil
 end
 
--- Eligible player in a location: tracked, present, cooldown-clear. If a target guid
--- is given (force self), only that player is considered.
-local function selectPlayer(loc, now, targetGuidLow)
-  local ls = INC.State.LocationState[loc.id]
-  if not ls or ls.count == 0 then return nil, "NO_ACTIVE_PLAYER" end
-  local n = 0
-  local anyBlocked = false
-  for guidLow in pairs(ls.players) do
-    if not targetGuidLow or guidLow == targetGuidLow then
-      local track = INC.State.PlayerTrack[guidLow]
-      if track then
-        if track.cooldownUntil <= now then
-          n = n + 1
-          sPlayers[n] = track
-        else
-          anyBlocked = true
-        end
-      end
-    end
-  end
-  if n == 0 then
-    if anyBlocked then return nil, "PLAYER_COOLDOWN" end
-    return nil, "NO_ACTIVE_PLAYER"
-  end
-  return sPlayers[math.random(1, n)], nil
-end
+-- How many eligible players to try per tick when looking for one standing near a
+-- guard. On a populated/bot server most players aren't next to a guard, so trying a
+-- single random one wastes the tick (NO_NEARBY_NPC). We try several so the configured
+-- rate is actually reachable; still bounded and pure-arithmetic.
+local MAX_PLAYER_TRIES = 12
 
 -- Candidate NPC: in the location's registry, on the player's map, within the cheap
 -- squared-distance pre-filter (cached spawn pos), cooldown-clear. Picks one at
@@ -205,6 +188,53 @@ local function selectNpc(loc, player, cfg, now)
   end
   local i = math.random(1, n)
   return sNpc[i], sNpcProf[i], nil
+end
+
+-- Pick an eligible player in the location who has a nearby speakable guard. Gathers
+-- cooldown-clear players, then tries up to MAX_PLAYER_TRIES of them in random order
+-- (partial Fisher-Yates over the scratch array — no allocation) until one has a
+-- candidate NPC. If a target guid is given (force self), only that player is tried.
+-- Returns track, player, reg, prof (or nils + a reason code).
+local function pickPlayerWithNpc(loc, cfg, now, targetGuidLow)
+  local ls = INC.State.LocationState[loc.id]
+  if not ls or ls.count == 0 then return nil, nil, nil, nil, "NO_ACTIVE_PLAYER" end
+  local n = 0
+  local anyBlocked = false
+  for guidLow in pairs(ls.players) do
+    if not targetGuidLow or guidLow == targetGuidLow then
+      local track = INC.State.PlayerTrack[guidLow]
+      if track then
+        if track.cooldownUntil <= now then
+          n = n + 1
+          sPlayers[n] = track
+        else
+          anyBlocked = true
+        end
+      end
+    end
+  end
+  if n == 0 then
+    if anyBlocked then return nil, nil, nil, nil, "PLAYER_COOLDOWN" end
+    return nil, nil, nil, nil, "NO_ACTIVE_PLAYER"
+  end
+
+  local tries = n < MAX_PLAYER_TRIES and n or MAX_PLAYER_TRIES
+  local lastFail = "NO_NEARBY_NPC"
+  local sawPlayer = false
+  for i = 1, tries do
+    local j = math.random(i, n)
+    sPlayers[i], sPlayers[j] = sPlayers[j], sPlayers[i]
+    local track = sPlayers[i]
+    local player = GetPlayerByGUID(track.guid)
+    if player and player:IsInWorld() then
+      sawPlayer = true
+      local reg, prof, nFail = selectNpc(loc, player, cfg, now)
+      if reg then return track, player, reg, prof, nil end
+      lastFail = nFail
+    end
+  end
+  if not sawPlayer then return nil, nil, nil, nil, "NO_ACTIVE_PLAYER" end
+  return nil, nil, nil, nil, lastFail
 end
 
 -- Matching line for (player context, npc role). Two-stage: content match first
@@ -353,19 +383,13 @@ local function attemptBody(forced, targetGuidLow)
     if not loc then return done(locFail) end
   end
 
-  -- Player.
-  local track, pFail = selectPlayer(loc, now, targetGuidLow)
-  if not track then return done(pFail) end
+  -- Player + NPC: find an eligible player who has a nearby speakable guard.
+  local track, player, reg, prof, selFail = pickPlayerWithNpc(loc, cfg, now, targetGuidLow)
+  if not track then return done(selFail) end
 
-  local player = GetPlayerByGUID(track.guid)
-  if not player or not player:IsInWorld() then return done("NO_ACTIVE_PLAYER") end
-
-  -- Lazy equipment scan — this one player, this instant (spec §4.5).
+  -- Lazy equipment scan — the chosen player, this instant (spec §4.5). Done only after
+  -- a valid player+NPC pair is found, so wasted ticks cost no scan.
   local tagLo, tagHi, quality, weaponType = INC.Players.ScanEquipment(player)
-
-  -- NPC.
-  local reg, prof, nFail = selectNpc(loc, player, cfg, now)
-  if not reg then return done(nFail) end
 
   -- Line.
   local line, lFail = selectLine(loc, track, prof, tagLo, tagHi, quality, now)

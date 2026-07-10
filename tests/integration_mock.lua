@@ -419,6 +419,28 @@ guard.lastSay = nil; guard.lastWhisper = nil
 local r8 = INC.Scheduler.RunAttempt(true, 5)
 ok(r8 == "EMITTED", "reload: still emits after reload (got " .. r8 .. ")")
 
+-- ---- ambient emission finds a guard-adjacent player among many far ones ----
+-- The whole point of pickPlayerWithNpc: on a busy server most players aren't near a
+-- guard. Add several far players in Stormwind; hero is the only one by the guard. An
+-- ambient (non-forced) attempt must still emit, not waste the tick on a far player.
+do
+  local far = {}
+  for i = 1, 8 do
+    far[i] = makePlayer({ guidLow = 100 + i, name = "Far" .. i, class = 1, race = 1, team = 0,
+                          x = 5000 + i, y = 5000, z = 10, mapId = 0, zoneId = 1519, areaId = 0 })
+    playerEvents[3](3, far[i])   -- all land in Stormwind (loc 1), far from the guard
+  end
+  INC.Scheduler.ClearCooldowns()
+  guard.lastSay = nil; guard.lastWhisper = nil
+  local emitted = false
+  for _ = 1, 5 do            -- a few ambient ticks (random order); should find hero quickly
+    if INC.Scheduler.RunAttempt(false, nil) == "EMITTED" then emitted = true; break end
+    INC.Scheduler.ClearCooldowns()
+  end
+  ok(emitted, "ambient: emits by finding the guard-adjacent player among 8 far players")
+  for i = 1, 8 do playerEvents[4](4, far[i]) end  -- clean up
+end
+
 -- ---- heartbeat tick is safe to call and pcall-guarded ----------------------
 INC.Scheduler.ClearCooldowns()
 local tickFn = luaEvents[INC.schedulerEventId]

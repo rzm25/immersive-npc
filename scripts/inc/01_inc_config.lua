@@ -84,7 +84,10 @@ INC.Config = {
   GlobalBurstMax = 2,                -- clamp 1..10
   GlobalBurstWindowMs = 180000,      -- token-bucket refill window for the global gate
 
-  -- Per-location pacing
+  -- Per-location pacing DEFAULTS. NOTE: the authoritative per-city values are the
+  -- `min_interval_ms` / `max_lines_per_10min` columns on immersive_npc_chat_location
+  -- (edit those + `.inm reload` to tune a city). These two keys mirror the seed's DB
+  -- defaults for operator familiarity and are not enforced at runtime.
   LocationMinIntervalMs = 120000,
   LocationMaxLinesPer10Min = 6,
 
