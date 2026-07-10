@@ -33,7 +33,7 @@ owner's actual build) is UNVERIFIED and flagged for confirmation.
 - **C. Runtime pipeline.** `03`–`08`: loaders, registry, tracking+scan, scheduler,
   commands, boot. *(Done.)*
 - **D. Verification harnesses.** Mock-engine integration test; SQL structural checker
-  (self-tested); CI. *(Done — 41/41, checker 5/5.)*
+  (self-tested); CI. *(Done — 46/46, checker 5/5.)*
 - **E. Content + SQL.** Schema, seeds (6 hubs, 6 profiles, 36 lines), verify_ids. *(Done.)*
 - **F. Docs + handoff.** SOURCES/DECISIONS/PROGRESS/TESTPLAN/CONTENT_GUIDE/PROJECT_PLAN/
   README/TRUTH_SOURCES + agent-notes + /source updates. *(In progress.)*

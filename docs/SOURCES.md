@@ -6,39 +6,58 @@ trusting any of it (workspace gotcha #1: never trust an API/schema from memory).
 
 ## Engine identity (decided ONCE — see DECISIONS ADR-003)
 
+**The owner confirmed the engine is ALE, at `azerothcore/mod-ale`.** All event IDs and
+method names below are verified against ALE's own source (not just upstream Eluna).
+
 | | Value |
 |---|---|
-| **Engine** | **Eluna** (the `ElunaLuaEngine/Eluna` Lua engine) as embedded in the `ElunaLuaEngine/ElunaAzerothcore` AzerothCore fork. Lua **5.2**. |
-| **ElunaAzerothcore pin** | `7029f29b4e53564830ef465a9a3ffb9d3ca774dd` (master, committed 2026-07-07) |
-| **Eluna engine submodule pin** | `e36707dde7ac5628bb733376a7b679e488612de4` (master, committed 2026-07-06), mounted at `src/server/game/LuaEngine` |
-| **Where the truth files live** | Hooks: `hooks/Hooks.h` (Eluna repo). Methods: `methods/AzerothCore/*.h` (Eluna repo). |
+| **Engine** | **ALE — AzerothCore Lua Engine**, `azerothcore/mod-ale`. Lua **5.2**. |
+| **ALE pin (verified against)** | `1cb86c9600260c3731c96dc3c98d25b4fc3f2153` (master, committed 2026-05-22) |
+| **Where the truth files live** | Hooks: **`src/LuaEngine/Hooks.h`**. Methods: **`src/LuaEngine/methods/*.h`** (+ Lua-name bindings, `src/LuaEngine/LuaFunctions.cpp`). |
+| **Config file** | `mod_ale.conf` (from `mod_ale.conf.dist`). Keys: `ALE.Enabled = true`, `ALE.ScriptPath = "lua_scripts"`, `ALE.AutoReload` (file-watcher; off by default). |
+| **Default script dir** | `ALE.ScriptPath` = `lua_scripts` — relative to the server folder (the folder with the worldserver binary). |
+| **Reload command** | `.reload ale` (in-game GM; dev-only) or a full restart. |
 
-> **Spec-vs-reality note (must read).** The build spec names the engine
-> `azerothcore/mod-eluna` ("ALE — AzerothCore Lua Engine", claimed diverged from
-> upstream Eluna). As of 2026-07-07 that repo path **404s**; the old
-> `azerothcore/mod-eluna-lua-engine` is **archived (2022)**. The live, actively
-> maintained AzerothCore Eluna is `ElunaLuaEngine/ElunaAzerothcore` (pinned above),
-> and **every event ID the spec listed verifies exactly against its upstream Eluna
-> `Hooks.h`** — so for the event/method surface this module uses, the claimed
-> divergence is immaterial. See ADR-003.
+> **How we got here.** The build spec named `azerothcore/mod-eluna`, which **404s**;
+> the old `azerothcore/mod-eluna-lua-engine` is **archived (2022)**. I first pinned
+> upstream Eluna (`ElunaLuaEngine/Eluna` @ `e36707d`, via `ElunaLuaEngine/ElunaAzerothcore`
+> @ `7029f29`) as a best-available proxy and verified every event ID against it. The
+> owner then supplied the real engine: **ALE at `azerothcore/mod-ale`**. I re-verified
+> every event ID **and** every method name against ALE's own `src/LuaEngine` — they
+> match (ALE is Eluna-lineage; internal signatures differ, e.g. `int F(lua_State* L,…)`
+> vs `Eluna* E`, but the Lua-facing names/IDs are identical). See ADR-003.
 >
-> **S1 is still UNVERIFIED for THIS server.** I do not have access to the owner's
-> server checkout. The pins above are the canonical public Eluna at the dates shown.
-> The owner must confirm which engine + commit their `worldserver` actually builds
-> and, if it differs, re-run the verification in this file against it.
+> **S1 residual gap:** I still don't have the owner's *exact* build commit; the pin
+> above is `azerothcore/mod-ale@master` as of 2026-05-22. If the server tracks a
+> different ALE commit, re-check this file against it — but the surface we use (login/
+> logout/zone/area/command + creature add/remove + config-load + state-close + the ~50
+> methods) is long-standing and unlikely to have moved.
+
+## ALE-specific behaviors verified (differ from a generic Eluna)
+
+- **`PLAYER_EVENT_ON_COMMAND` (42)** signature is `(event, player, command, chatHandler)`
+  and **`player` is nil for a server-console command** (`handler.IsConsole()`). The
+  handler guards `if not player then return end` (07). `command` has **no leading dot**
+  (ALE's own `reload ale` intercept matches from index 0). Returning `false` consumes the
+  command; `nil` lets core process it (`START_HOOK_WITH_RETVAL(…, true)`).
+- **State-close hook is `ALE_EVENT_ON_LUA_STATE_CLOSE = 16`** (Eluna's `ELUNA_…`). We use
+  the numeric literal 16.
+- **`.reload ale` fires no login event for already-connected players** (ALE reload
+  limitation). Boot calls `INC.Players.TrackOnline()` (via `GetPlayersInWorld()`) so they
+  are re-tracked; a no-op at server startup.
 
 ## Source table (spec §1)
 
 | # | Source | Authoritative for | Status |
 |---|--------|-------------------|--------|
-| S1 | The exact Eluna checkout the server builds | every event ID / method / signature | **UNVERIFIED for this server** — pins above used as the public reference |
-| S2 | `hooks/Hooks.h` @ Eluna e36707d | event enums | verified 2026-07-07 |
-| S3 | `methods/AzerothCore/*.h` @ Eluna e36707d | `Player/Creature/Unit/Item/Map/WorldObject/Global` methods | verified 2026-07-07 |
+| S1 | The exact ALE checkout the server builds | every event ID / method / signature | engine confirmed **ALE**; verified against `azerothcore/mod-ale@1cb86c9` (owner to confirm exact commit) |
+| S2 | `src/LuaEngine/Hooks.h` @ mod-ale 1cb86c9 | event enums | verified 2026-07-10 |
+| S3 | `src/LuaEngine/methods/*.h` + `LuaFunctions.cpp` @ mod-ale 1cb86c9 | `Player/Creature/Unit/Item/Map/WorldObject/Global` methods + Lua-name bindings | verified 2026-07-10 |
 | S4 | AzerothCore world DB schema of the target server | `creature`, `creature_template` for authoring profiles | operator-side (verify guard entries with `sql/verify_ids.sql`) |
 | S5 | AzerothCore wiki (SmartAI, `creature_text`) | v2 ambience supplement | not used in v1 |
 | S6 | 3.3.5a client addon API | v3 client layer | not built |
 
-## Verified event IDs (S2 — `hooks/Hooks.h` @ e36707d)
+## Verified event IDs (S2 — ALE `src/LuaEngine/Hooks.h` @ 1cb86c9)
 
 All match the spec. Registered by this module marked ✅; referenced-but-not-registered
 marked ·; **banned** marked 🚫.
@@ -54,7 +73,7 @@ marked ·; **banned** marked 🚫.
 | `CREATURE_EVENT_ON_ADD` | 36 | ✅ 04 (per profiled entry) |
 | `CREATURE_EVENT_ON_REMOVE` | 37 | ✅ 04 (per profiled entry) |
 | `WORLD_EVENT_ON_CONFIG_LOAD` | 9 | ✅ 08 |
-| `ELUNA_EVENT_ON_LUA_STATE_CLOSE` | 16 | ✅ 08 (cancel heartbeat) |
+| `ALE_EVENT_ON_LUA_STATE_CLOSE` | 16 | ✅ 08 (cancel heartbeat) |
 | `WORLD_EVENT_ON_UPDATE` | 13 | 🚫 never registered (spec §4.7 / §13) |
 | `TRIGGER_EVENT_ON_TRIGGER` | 24 | · v2 |
 | `ADDON_EVENT_ON_MESSAGE` | 30 | · v3 |
@@ -64,7 +83,7 @@ marked ·; **banned** marked 🚫.
 registering every item entry.) This is the whole reason equipment is lazy-scanned, not
 cached (ADR-001).
 
-## Verified method signatures (S3 — `methods/AzerothCore/*.h` @ e36707d)
+## Verified method signatures (S3 — ALE `src/LuaEngine/methods/*.h` @ 1cb86c9; names confirmed in `LuaFunctions.cpp`)
 
 Globals (`GlobalMethods.h`):
 - `RegisterPlayerEvent(event, fn)` · `RegisterCreatureEvent(entry, event, fn)` · `RegisterServerEvent(event, fn)`
@@ -75,7 +94,7 @@ Globals (`GlobalMethods.h`):
 - `GetGameTime() -> int64 epoch SECONDS` (never wraps; this module's ms clock is `*1000` — ADR-002)
 - `PrintInfo(str)` / `PrintError(str)`
 
-Query result (`ElunaQueryMethods.h`), columns **0-indexed**:
+Query result (`ALEQueryMethods.h`), columns **0-indexed**:
 - `GetUInt32(i)` `GetUInt8(i)` `GetFloat(i)` `GetString(i)` `IsNull(i)` `GetRowCount()`
 - `NextRow() -> bool` — iterate with `repeat ... until not q:NextRow()`
 
@@ -114,6 +133,7 @@ Stormwind 1519 (map 0) · Ironforge 1537 (0) · Darnassus 1657 (1) · Orgrimmar 
 Thunder Bluff 1638 (1) · Undercity 1497 (0). Stable 3.3.5a values, but confirm in-game.
 
 ## Changelog
-- 2026-07-07 — Created. Pinned Eluna/ElunaAzerothcore; verified all event IDs + methods
+- 2026-07-10 — Owner confirmed the engine is ALE (azerothcore/mod-ale). Re-pinned + re-verified all event IDs and method names against ALE src/LuaEngine (@1cb86c9); added ALE-specific behaviors (console nil player, .reload ale, state-close naming, TrackOnline). Prior Eluna proxy pin retained in the history note.
+- 2026-07-07 — Created. Pinned upstream Eluna as a proxy; verified event IDs; recorded the mod-eluna 404.
   against the pin; recorded the spec's missing-`mod-eluna` divergence and the S1
   UNVERIFIED-for-this-server caveat.

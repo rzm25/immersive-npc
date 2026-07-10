@@ -21,7 +21,10 @@ the dev sandbox / CI, done) and **in-game** (owner runs on the live server, pend
 | Integration: player/npc/line cooldown blocks forced repeat; `cooldown clear` restores | `tests/integration_mock.lua` | ✅ |
 | Integration: final validation rejects combat / far / phase-mismatch | `tests/integration_mock.lua` | ✅ |
 | Integration: whisper honors `AllowPersonalWhispers`; ON_REMOVE deregisters | `tests/integration_mock.lua` | ✅ |
-| Integration: `.inm reload` swaps content atomically, registry untouched | `tests/integration_mock.lua` | ✅ (41 total) |
+| Integration: `.inm reload` swaps content atomically, registry untouched | `tests/integration_mock.lua` | ✅ |
+| Integration: GM command dispatch (`status`/`debug on\|off`/`force self`/`cooldown clear`); non-GM refused | `tests/integration_mock.lua` | ✅ |
+| Integration: ALE console command (`player=nil`) falls through without error | `tests/integration_mock.lua` | ✅ |
+| Integration: `TrackOnline()` re-tracks connected players (the `.reload ale` path) | `tests/integration_mock.lua` | ✅ (46 total) |
 | Integration: `WORLD_EVENT_ON_UPDATE` (13) never registered | `tests/integration_mock.lua` | ✅ |
 | SQL: structural checker self-test (must be able to fail) | `tools/check_sql_selftest.py` | ✅ 5/5 |
 | SQL: schema + seeds structurally clean; real MySQL apply + idempotency | `tools/check_sql.py` + CI `sql` job | ✅ local; CI on push |

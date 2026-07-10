@@ -77,6 +77,28 @@ Offline gates all green (luacheck 0, unit 66/66, integration 32/32, SQL checker 
   Fixed the mock to honor `o.gm`; command tests now exercise the real GM-gated dispatch.
 - Integration harness is now **41** assertions (added 2 NPC-cooldown + 7 command tests).
 
+## Session 2 (2026-07-10): engine confirmed as ALE (azerothcore/mod-ale)
+
+The owner pointed to `azerothcore/mod-ale`'s USAGE.md — so ALE is real, at
+**`azerothcore/mod-ale`** (I'd only checked the 404 `azerothcore/mod-eluna`). I re-verified
+**every event ID and method name against ALE's own `src/LuaEngine`** (Hooks.h + methods/*.h
++ LuaFunctions.cpp bindings) at `mod-ale@1cb86c9` — they all match; the module was already
+API-correct (ALE is Eluna-lineage; only internal C signatures differ). Changes made:
+
+- **Real bug (ALE-specific):** `PLAYER_EVENT_ON_COMMAND` passes `player=nil` for
+  server-console commands (`handler.IsConsole()`). Added `if not player then return end` in
+  `07` (previously only the pcall wrapper caught the deref). ADR-009.
+- **`.reload ale` fires no login event** for connected players → added
+  `INC.Players.TrackOnline()` (via `GetPlayersInWorld()`) called at Boot; no-op at startup.
+  ADR-009. Refactored login into a shared `track(player)`.
+- Renamed the state-close constant to `ALE_EVENT_ON_LUA_STATE_CLOSE` (value 16 unchanged).
+- Docs corrected everywhere: engine = ALE, config `mod_ale.conf` (`ALE.Enabled`,
+  `ALE.ScriptPath="lua_scripts"`), reload `.reload ale` (NOT `.reload eluna`). SOURCES.md
+  re-pinned to ALE; DECISIONS ADR-003 addendum + ADR-009; `/source` gotcha #15 corrected
+  (ALE lives at `azerothcore/mod-ale`; snapshot taken).
+- Integration harness now **46** assertions (added console-nil-player + TrackOnline).
+- Handoff commands corrected for the owner (script dir, `.reload ale`).
+
 ### Handoff state / next steps
 - **Pushed** the module commit `60dfc9e` to `origin/main` (github.com/rzm25/immersive-npc).
   The CI workflow is a SEPARATE local commit `5558460` that could NOT be pushed — the

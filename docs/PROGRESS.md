@@ -18,7 +18,7 @@ Updated every session. v1 = Phases 1–6. Phases 7 (v2) and 8 (v3) are future mi
 ## Verified HERE (this sandbox — see TESTPLAN for detail)
 - `luacheck` clean on all scripts + tests + `.luacheckrc` (0 warnings; implicit globals forbidden).
 - `tests/run_tests.lua` — 66/66 pure-Lua unit assertions.
-- `tests/integration_mock.lua` — 41/41 end-to-end assertions against a mock engine.
+- `tests/integration_mock.lua` — 46/46 end-to-end assertions against a mock engine.
 - `tools/check_sql*.py` — SQL structural checker self-test passes (catches the 3 defect classes); real seeds clean.
 - Every event ID + method signature verified against the Eluna pin (SOURCES.md).
 

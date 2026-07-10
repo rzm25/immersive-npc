@@ -14,8 +14,8 @@ something new.
 @docs/PROJECT_PLAN.md
 @agent-notes/immersive-npc-session-notes.md
 
-<!-- NOTE: this is a Lua / Eluna (ALE) module — no C++ build, no loader symbol.
-     Deployment = copy scripts/inc/ into the server's Lua scripts dir. The engine pin +
-     verified event IDs/methods are in docs/SOURCES.md; read it before touching event
-     registration (a wrong event id fails SILENTLY in Lua). -->
+<!-- NOTE: this is a Lua module for ALE (azerothcore/mod-ale) — no C++ build, no loader
+     symbol. Deployment = copy scripts/inc/ into ALE.ScriptPath (lua_scripts); reload with
+     `.reload ale`. The engine pin + verified event IDs/methods are in docs/SOURCES.md; read
+     it before touching event registration (a wrong event id fails SILENTLY in Lua). -->
 <!-- The @-imports above pull these files into context automatically when they exist. -->

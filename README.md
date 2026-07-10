@@ -10,11 +10,11 @@ No worldserver core patch. No client patch (v1). Works on an unmodified client.
 
 ## Requirements
 
-- An AzerothCore 3.3.5a server running **Eluna / ALE** (this module is Lua-only — there
-  is nothing to compile). Pinned reference engine + commit: see [docs/SOURCES.md](docs/SOURCES.md).
-  **Confirm the engine + commit your server actually builds** before trusting event IDs
-  (workspace gotcha #1). If your build is not the pinned Eluna, re-verify SOURCES.md
-  against it — a wrong event id fails **silently** in Lua.
+- An AzerothCore 3.3.5a server running **ALE — AzerothCore Lua Engine**
+  ([`azerothcore/mod-ale`](https://github.com/azerothcore/mod-ale)). Lua-only — nothing to
+  compile. Event IDs + method names are verified against ALE `@1cb86c9`; see
+  [docs/SOURCES.md](docs/SOURCES.md). If your ALE commit differs, a wrong event id fails
+  **silently** in Lua, so re-check SOURCES.md against your build (workspace gotcha #1).
 - Lua **5.2** (ALE). The scripts and unit tests assume 5.2 (`bit32`).
 
 ## Install
@@ -32,22 +32,24 @@ No worldserver core patch. No client patch (v1). Works on an unmodified client.
    Any entries listed as `missing_entry` don't exist on your server — fix those
    `creature_entry` values in the profile seed (find yours with
    `SELECT entry,name FROM creature_template WHERE name LIKE '%Guard%';`).
-2. **Deploy the scripts**: copy the contents of `scripts/inc/` into your server's
-   configured Lua scripts directory (e.g. `lua_scripts/`). Keep the `01_`…`08_` filename
-   prefixes — load order matters.
-3. **Reload or restart**: `.reload eluna` (or restart `worldserver`). You should see a
-   boot line like:
+2. **Deploy the scripts**: copy the contents of `scripts/inc/` into ALE's script
+   directory — `ALE.ScriptPath` in `mod_ale.conf` (default `lua_scripts`, relative to the
+   folder containing the worldserver binary). A subfolder is fine (ALE loads recursively);
+   keep the `01_`…`08_` filename prefixes — load order matters. Ensure `ALE.Enabled = true`.
+3. **Reload or restart**: `.reload ale` (in-game GM) or restart `worldserver`. You should
+   see a boot line like:
    ```
-   [inm] v1.0.0 loaded: 6 locations, 6 profiled entries (6 profiles), 36 lines, 0 skipped | profiledEntries hooked=6 | tick=5000ms | engine=...
+   [inm] v1.0.0 loaded: 6 locations, 6 profiled entries (6 profiles), 36 lines, 0 skipped | profiledEntries hooked=6 | tracked online=0 | tick=5000ms | engine=ALE (azerothcore/mod-ale) ...
    ```
 4. Walk into a capital and wait, or drive it with `.inm force self` (as a GM).
 
 ## Configuration
 
-There is **no `.conf` file** — config is the Lua table `INC.Config` in
-[scripts/inc/01_inc_config.lua](scripts/inc/01_inc_config.lua). Edit it and reload
-(`.inm reload` re-clamps the in-memory config and reloads the DB content without a
-restart; editing the *file* needs `.reload eluna`). Key values (all clamped on load):
+The module's own settings are the Lua table `INC.Config` in
+[scripts/inc/01_inc_config.lua](scripts/inc/01_inc_config.lua) (there is no per-module
+`.conf`). Edit it and reload — `.inm reload` re-clamps the in-memory config and reloads the
+DB content without a restart; editing the *file* needs `.reload ale`. (ALE's *engine*
+config is `mod_ale.conf`.) Key values (all clamped on load):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -101,9 +103,12 @@ Add rows to `immersive_npc_chat_line`, run `python3 tools/check_sql.py <file>`, 
 - **Cooldowns are memory-only** — they reset on script reload / server restart (by design).
 - **No unequip event exists**, so equipment is *lazy-scanned* per attempt rather than
   cached — always correct, and a client spam-swapping gear costs nothing (ADR-001).
-- **Adding a brand-new profiled creature `entry` needs a full `.reload eluna`**, not
-  just `.inm reload` — Eluna can't hot-register a new creature hook (ADR-007). Editing an
-  existing profile's attributes, or its lines/locations, works live.
+- **Adding a brand-new profiled creature `entry` needs a full `.reload ale`**, not just
+  `.inm reload` — ALE can't hot-register a new creature hook (ADR-007). Editing an existing
+  profile's attributes, or its lines/locations, works live via `.inm reload`.
+- **`.reload ale` is dev-only** (per ALE's docs); connected players get no login event on
+  reload, but Boot's `TrackOnline()` re-tracks them anyway. Use a full restart for
+  production / final testing.
 - **Guard entries + zone IDs are best-effort** and must be verified on your DB
   (`sql/verify_ids.sql`, `.gps`, `.inm where`). A wrong one is inert, not fatal.
 

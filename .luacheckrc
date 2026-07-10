@@ -21,7 +21,7 @@ read_globals = {
   "RemoveEventById",
   "WorldDBQuery",
   "GetPlayerByGUID",
-  "GetPlayersInWorld",
+  "GetPlayersInWorld",   -- ALE: returns a table of online Player objects
   "GetGameTime",
   "PrintInfo",
   "PrintError",
@@ -44,6 +44,6 @@ files["tests/integration_mock.lua"] = {
   globals = {
     "INC", "PrintInfo", "PrintError", "GetGameTime", "WorldDBQuery",
     "RegisterPlayerEvent", "RegisterCreatureEvent", "RegisterServerEvent",
-    "CreateLuaEvent", "RemoveEventById", "GetPlayerByGUID",
+    "CreateLuaEvent", "RemoveEventById", "GetPlayerByGUID", "GetPlayersInWorld",
   },
 }

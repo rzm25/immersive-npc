@@ -38,6 +38,15 @@ the surface this module uses. The spec's own §1 mandates deciding the engine ON
 pinning it; this is that decision. **Caveat:** the owner must still confirm what their
 server actually builds (S1 is UNVERIFIED for this server — see SOURCES.md).
 
+**Addendum (2026-07-10) — engine confirmed as ALE at `azerothcore/mod-ale`.** The owner
+supplied the real engine: ALE lives at `azerothcore/mod-ale` (the spec's
+`azerothcore/mod-eluna` path never existed). Re-pinned to `mod-ale@1cb86c9` and
+re-verified **every event ID and every method name against ALE's own `src/LuaEngine`**
+(Hooks.h + methods/*.h + the Lua-name bindings in LuaFunctions.cpp) — all match what the
+upstream-Eluna proxy gave, confirming the module was already API-correct. ALE's internal C
+signatures differ (`int F(lua_State* L, …)` vs Eluna's `Eluna* E`) but that is invisible to
+Lua. Remaining gap: the owner's *exact* build commit (surface is stable).
+
 ## ADR-004 — Population budget realized as a per-location token bucket with a dynamic window (2026-07-07)
 **Decision.** Each location has a capacity-2 token bucket (spec §4.6). Before gating,
 its refill window is set to `capacity * 60000 / perMinute`, where `perMinute =
@@ -79,3 +88,14 @@ from the **chest** slot only; weapon/shield/ranged/tabard tags come from their o
 **Reason.** A character wears mixed armor subclasses (a plate wearer often has a cloth
 cloak). The chest piece is the reliable signal of a character's armor class, avoiding
 false material tags.
+
+## ADR-009 — ALE-specific hardening: console guard + TrackOnline (2026-07-10)
+**Decision.** (a) The `.inm` command handler returns early when `player == nil`. (b) Boot
+calls `INC.Players.TrackOnline()` to track already-connected players via
+`GetPlayersInWorld()`.
+**Reason.** Verified against ALE source: `PLAYER_EVENT_ON_COMMAND` passes `player = nil`
+for a **server-console** command (`handler.IsConsole()`), which would have made
+`player:IsGM()` error (previously only caught by the pcall wrapper). And `.reload ale`
+fires **no login event** for connected players, so without TrackOnline they would stay
+invisible to the feature until relog. TrackOnline is a no-op at server startup (nobody
+online). Neither affects a normal full restart. Both are covered by integration tests.

@@ -22,7 +22,7 @@ emission. 64-bit masks split lo/hi for Lua 5.2 `bit32`.
 1 skeleton → 2 config+data → 3 player tracking+lazy scan → 4 registry → 5 scheduler+emission → 6 content. (7 v2, 8 v3 future.)
 
 ## Verified facts the build relies on (see SOURCES.md for the pin + full table)
-- Engine: Eluna @ `ElunaAzerothcore` pins in SOURCES.md; Lua 5.2. **S1 UNVERIFIED for this server.**
+- Engine: ALE (azerothcore/mod-ale) pin in SOURCES.md; Lua 5.2. **S1 UNVERIFIED for this server.**
 - Event IDs 3/4/27/47/42/36/37/9/16 verified; 13 banned. No player unequip event.
 - `CreateLuaEvent` returns an id; `RemoveEventById` cancels. `GetGameTime()` = epoch seconds.
 - `GetGUID()` = persistable ObjectGuid value; resolve via `GetPlayerByGUID` / `Map:GetWorldObject`.
@@ -36,7 +36,7 @@ An assessor can run these to judge whether the code meets each requirement.
 ### A. Static / offline (runnable in this sandbox)
 - **A1** `luacheck scripts/inc tests .luacheckrc` → 0 warnings. (No implicit globals; only `INC` is global.) ✅
 - **A2** `lua5.2 tests/run_tests.lua` → "66 passed, 0 failed". ✅
-- **A3** `lua5.2 tests/integration_mock.lua` → "41 passed, 0 failed". ✅
+- **A3** `lua5.2 tests/integration_mock.lua` → "46 passed, 0 failed". ✅
 - **A4** `python3 tools/check_sql_selftest.py` → "self-test: OK" (linter provably catches broken SQL). ✅
 - **A5** `python3 tools/check_sql.py sql/world/base/*.sql sql/world/updates/*.sql` → clean. ✅
 - **A6** `grep -rn "WORLD_EVENT_ON_UPDATE\|RegisterServerEvent(13" scripts/` → no match (heartbeat rule). ✅

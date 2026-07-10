@@ -7,7 +7,7 @@ it and note it in `agent-notes/`.
 ## Identity
 - **Module:** `lua-immersive-npc-chat` — immersive, context-aware NPC ambience chat.
 - **Repo:** `github.com/rzm25/immersive-npc` (working dir `/workspaces/sandyb/immersive-npc`).
-- **Engine:** Eluna / ALE, Lua 5.2 (pins in [docs/SOURCES.md](docs/SOURCES.md)). Lua-only — no C++ build, no loader symbol.
+- **Engine:** **ALE** (`azerothcore/mod-ale`), Lua 5.2 (pin in [docs/SOURCES.md](docs/SOURCES.md)). Lua-only — no C++ build, no loader symbol. Scripts → `ALE.ScriptPath` (`lua_scripts`); reload `.reload ale`; engine conf `mod_ale.conf`.
 - **Reserved ID block:** **9506xx** (`/source/ID_RANGES.md`). v1 uses **no** custom
   creature/spell/quest IDs — it profiles STOCK creatures. Block held for future custom NPCs (e.g. a Town Crier).
 

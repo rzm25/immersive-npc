@@ -114,6 +114,9 @@ local function cmdDebug(player, args)
 end
 
 local function handle(_, player, command)
+  -- ALE passes player=nil for a command typed at the SERVER CONSOLE
+  -- (handler.IsConsole()); we only act on in-game GMs, so let those fall through.
+  if not player then return end
   local args = splitWords(command)
   if args[1] ~= "inm" then return end   -- not ours: let core handle it (return nothing)
 

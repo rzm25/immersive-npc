@@ -94,6 +94,10 @@ function RemoveEventById(id) luaEvents[id] = nil end
 local playersByGuid = {}
 function GetPlayerByGUID(guid) return playersByGuid[guid] end
 
+-- ALE GetPlayersInWorld() returns a table of online Player objects. Test-controlled.
+local worldPlayers = {}
+function GetPlayersInWorld() return worldPlayers end
+
 -- ===========================================================================
 -- Fake game objects
 -- ===========================================================================
@@ -336,6 +340,28 @@ do
   hero.gm = false
   ok(onCmd(42, hero, "inm status") == false, "cmd: non-GM refused but .inm still consumed")
   hero.gm = true
+  -- ALE console command: player is nil -> must fall through untouched (no crash)
+  ok(onCmd(42, nil, "inm status") == nil, "cmd: console (nil player) falls through without error")
+end
+
+-- ---- TrackOnline re-tracks connected players (the `.reload ale` path) ---------
+-- On `.reload ale` no login event fires for already-connected players; TrackOnline
+-- picks them up from GetPlayersInWorld(). We add a new player (guid 7) WITHOUT firing
+-- login, then verify TrackOnline tracks them — without disturbing hero (guid 5).
+do
+  local heroC = makePlayer({
+    guidLow = 7, name = "Reconnected", class = 1, race = 1, team = 0,
+    x = 100, y = 100, z = 10, mapId = 0, zoneId = 1519, areaId = 0,
+  })
+  worldPlayers = { heroC }
+  local n = INC.Players.TrackOnline()
+  ok(n == 1, "TrackOnline: reported 1 online player")
+  ok(INC.State.PlayerTrack[7] ~= nil, "TrackOnline: connected player is tracked without a login event")
+  ok(INC.State.LocationState[1] and INC.State.LocationState[1].players[7], "TrackOnline: placed in their location")
+  -- clean up via the real logout handler so shared state is undisturbed for later tests
+  worldPlayers = {}
+  playerEvents[4](4, heroC)
+  ok(INC.State.PlayerTrack[7] == nil, "TrackOnline cleanup: player untracked on logout")
 end
 
 -- ---- ON_REMOVE deregisters -------------------------------------------------

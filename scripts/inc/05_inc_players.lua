@@ -149,10 +149,12 @@ local function raceBit(race)
   return 0
 end
 
-local function onLogin(_, player)
+-- Build/refresh the track for one player and place them in their location. Shared by
+-- the login hook and TrackOnline (the `.reload ale` path).
+local function track(player)
   local guidLow = player:GetGUIDLow()
   local class, race = player:GetClass(), player:GetRace()
-  local track = {
+  local t = {
     guid = player:GetGUID(),
     guidLow = guidLow,
     classId = class,
@@ -165,15 +167,19 @@ local function onLogin(_, player)
     locationId = nil,
     cooldownUntil = 0,
   }
-  INC.State.PlayerTrack[guidLow] = track
-  updateLocation(track, player)
+  INC.State.PlayerTrack[guidLow] = t
+  updateLocation(t, player)
+end
+
+local function onLogin(_, player)
+  track(player)
 end
 
 local function onLogout(_, player)
   local guidLow = player:GetGUIDLow()
-  local track = INC.State.PlayerTrack[guidLow]
-  if track and track.locationId then
-    local ls = INC.State.LocationState[track.locationId]
+  local t = INC.State.PlayerTrack[guidLow]
+  if t and t.locationId then
+    local ls = INC.State.LocationState[t.locationId]
     if ls and ls.players[guidLow] then
       ls.players[guidLow] = nil
       ls.count = ls.count - 1
@@ -184,11 +190,25 @@ end
 
 local function onZoneOrArea(_, player)
   local guidLow = player:GetGUIDLow()
-  local track = INC.State.PlayerTrack[guidLow]
-  if not track then return end  -- not yet tracked (rare ordering); login will set it
-  track.zoneId = player:GetZoneId()
-  track.areaId = player:GetAreaId()
-  updateLocation(track, player)
+  local t = INC.State.PlayerTrack[guidLow]
+  if not t then return end  -- not yet tracked (rare ordering); login will set it
+  t.zoneId = player:GetZoneId()
+  t.areaId = player:GetAreaId()
+  updateLocation(t, player)
+end
+
+-- Track every already-connected player. Called once at Boot: a no-op at server
+-- startup (nobody online yet), but on `.reload ale` it re-tracks connected players,
+-- who otherwise get no login event (ALE reload limitation) and would stay invisible
+-- to the feature until relog.
+function INC.Players.TrackOnline()
+  local players = GetPlayersInWorld()
+  if type(players) ~= "table" then return 0 end
+  local n = 0
+  for _, player in pairs(players) do
+    if player then track(player); n = n + 1 end
+  end
+  return n
 end
 
 function INC.Players.Init()
