@@ -53,7 +53,8 @@ function INC.Boot()
   local profiledN = INC.Registry.Init()
   INC.Players.Init()
   INC.Commands.Init()
-  local onlineN = INC.Players.TrackOnline()   -- 0 at startup; re-tracks players on `.reload ale`
+  local onlineN = INC.Players.TrackOnline()      -- 0 at startup; re-tracks players on `.reload ale`
+  local seededN = INC.Registry.SeedFromPlayers() -- 0 at startup (ON_ADD covers grids); fills registry on `.reload ale`
 
   RegisterServerEvent(WORLD_EVENT_ON_CONFIG_LOAD, INC.Protect("main.onConfigLoad", function()
     INC.ClampConfig()
@@ -63,8 +64,8 @@ function INC.Boot()
   end))
 
   INC.State.booted = true
-  INC.Log(("v%s loaded: %s | profiledEntries hooked=%d | tracked online=%d | tick=%dms | engine=%s")
-    :format(INC.VERSION, summary(), profiledN, onlineN, INC.Config.SchedulerTickMs, INC.ENGINE))
+  INC.Log(("v%s loaded: %s | entries hooked=%d | online=%d | registry seeded=%d | tick=%dms | engine=%s")
+    :format(INC.VERSION, summary(), profiledN, onlineN, seededN, INC.Config.SchedulerTickMs, INC.ENGINE))
 end
 
 INC.Boot()

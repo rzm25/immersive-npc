@@ -435,7 +435,7 @@ function INC.Scheduler.Init()
   local now = INC.NowMs()
   INC.State.Metrics = INC.Scheduler.NewMetrics()
   INC.State.GlobalBucket = U.NewBucket(INC.Config.GlobalBurstMax, INC.Config.GlobalBurstWindowMs, now)
-  INC.State.GlobalLastEmitMs = 0
+  INC.State.GlobalLastEmitMs = now   -- start the global min-interval clock at boot (no line in the first interval; sane `.inm status`)
   INC.State.LocPacing = {}
   INC.State.LineCooldown = {}
   INC.State.GroupCooldown = {}

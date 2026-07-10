@@ -22,7 +22,9 @@ INC.Registry = INC.Registry or {}
 local CREATURE_EVENT_ON_ADD = 36
 local CREATURE_EVENT_ON_REMOVE = 37
 
-local function onAdd(_, creature)
+-- Register one spawned creature if it belongs to a profiled entry+location. Dedups on
+-- guidLow. Shared by the ON_ADD hook and the boot-time seed.
+local function registerCreature(creature)
   local caches = INC.Caches
   if not caches then return end
   local entry = creature:GetEntry()
@@ -46,6 +48,10 @@ local function onAdd(_, creature)
     cooldownUntil = 0,                  -- memory-only NPC cooldown
   }
   st.RegistryIndex[guidLow] = locId
+end
+
+local function onAdd(_, creature)
+  registerCreature(creature)
 end
 
 local function onRemove(_, creature)
@@ -80,6 +86,34 @@ function INC.Registry.Init()
     n = n + 1
   end
   return n
+end
+
+-- Seed the registry from creatures already spawned near online players. ON_ADD only
+-- fires on grid load, so after a `.reload ale` the registry is empty even though the
+-- city guards are still spawned. This walks each tracked player who is in a profiled
+-- location and registers profiled-entry creatures around them (dedup on guidLow via
+-- registerCreature). Guards with no nearby player aren't registered — but the feature
+-- only ever speaks near players, so that is exactly the set that matters. A no-op at a
+-- fresh server start (nobody online; ON_ADD covers everything as grids load).
+local SEED_RANGE = 250.0
+function INC.Registry.SeedFromPlayers()
+  local caches = INC.Caches
+  for _, track in pairs(INC.State.PlayerTrack) do
+    if track.locationId then
+      local player = GetPlayerByGUID(track.guid)
+      if player and player:IsInWorld() then
+        for entry in pairs(caches.ProfiledEntries) do
+          local creatures = player:GetCreaturesInRange(SEED_RANGE, entry, 0, 1)
+          if type(creatures) == "table" then
+            for _, creature in pairs(creatures) do
+              registerCreature(creature)
+            end
+          end
+        end
+      end
+    end
+  end
+  return INC.State.RegistryCount
 end
 
 -- Iterate registry entries for a location (may be empty/nil). Returns the table or

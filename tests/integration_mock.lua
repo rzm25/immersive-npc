@@ -116,6 +116,7 @@ local function makeItem(class, subclass, invtype, quality)
 end
 
 local mapSingleton  -- forward decl; one shared map
+local allCreatures = {}  -- every makeCreature() is appended here (for GetCreaturesInRange)
 
 local function makePlayer(o)
   local p = {
@@ -150,6 +151,16 @@ local function makePlayer(o)
   function p:GetDistance(other) return dist3(self, other) end
   function p:GetEquippedItemBySlot(slot) return self._equip[slot] end
   function p:SendBroadcastMessage(_) end
+  -- ALE: player:GetCreaturesInRange(range, entry, hostile, dead) -> table of creatures
+  function p:GetCreaturesInRange(range, entry)
+    local out = {}
+    for _, c in ipairs(allCreatures) do
+      if (entry == 0 or c._entry == entry) and c.mapId == self.mapId and dist3(self, c) <= range then
+        out[#out + 1] = c
+      end
+    end
+    return out
+  end
   playersByGuid[p._guid] = p
   return p
 end
@@ -182,6 +193,7 @@ local function makeCreature(o)
   function c:SendUnitEmote(msg) self.lastEmote = msg end
   function c:PerformEmote(id) self.lastPerform = id end
   creaturesByGuid[c._guid] = c
+  allCreatures[#allCreatures + 1] = c
   return c
 end
 
@@ -367,6 +379,21 @@ do
   worldPlayers = {}
   playerEvents[4](4, heroC)
   ok(INC.State.PlayerTrack[7] == nil, "TrackOnline cleanup: player untracked on logout")
+end
+
+-- ---- SeedFromPlayers re-registers guards near players (the `.reload ale` path) ----
+-- On reload the registry is empty even though guards are still spawned (ON_ADD only
+-- fires on grid load). SeedFromPlayers walks tracked players and re-registers profiled
+-- creatures around them via GetCreaturesInRange. Wipe the registry, then reseed: hero
+-- (tracked, in Stormwind) is next to the guard, so it must come back.
+do
+  INC.State.Registry = {}
+  INC.State.RegistryIndex = {}
+  INC.State.RegistryCount = 0
+  local n = INC.Registry.SeedFromPlayers()
+  ok(n >= 1, "SeedFromPlayers: re-registered guard(s) near tracked players (got " .. n .. ")")
+  ok(INC.State.Registry[1] and INC.State.Registry[1][1001] ~= nil,
+     "SeedFromPlayers: Stormwind guard back in the registry without ON_ADD")
 end
 
 -- ---- ON_REMOVE deregisters -------------------------------------------------
