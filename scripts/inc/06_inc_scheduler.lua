@@ -20,9 +20,15 @@ INC.Scheduler = INC.Scheduler or {}
 local U = INC.Util
 local band = bit32.band
 
--- ms clock from epoch seconds. Avoids getMSTime()'s ~49-day wrap (see DECISIONS ADR-002).
+-- ms clock from epoch seconds. ALE boxes int64 return values (incl. GetGameTime) as a
+-- LongLong *userdata*, which can't be used with math.randomseed or plain arithmetic —
+-- so when GetGameTime() isn't a plain number (i.e. on ALE), fall back to os.time()
+-- (a plain-number epoch clock; ALE calls luaL_openlibs so os is available). Both are
+-- epoch seconds and never wrap, unlike getMSTime() (ADR-002/ADR-010).
 function INC.NowMs()
-  return GetGameTime() * 1000
+  local g = GetGameTime()
+  if type(g) == "number" then return g * 1000 end
+  return os.time() * 1000
 end
 
 -- Failure-reason / outcome codes (spec §8). Every tick ends on exactly one of these.

@@ -40,9 +40,12 @@ end
 
 function INC.Boot()
   INC.State = {}
-  -- Seed the RNG from engine time so line/NPC selection varies across restarts
-  -- (unseeded math.random repeats the same sequence every boot).
-  math.randomseed(GetGameTime())
+  -- Seed the RNG so line/NPC selection varies across restarts. GetGameTime() is a
+  -- LongLong *userdata* on ALE (randomseed needs a number), so use os.time() unless
+  -- GetGameTime happens to be a plain number (the test harness).
+  local seed = GetGameTime()
+  if type(seed) ~= "number" then seed = os.time() end
+  math.randomseed(seed)
   INC.ClampConfig()
   INC.Caches = INC.Data.Load()
 
