@@ -212,6 +212,24 @@ function INC.Players.TrackOnline()
   return n
 end
 
+-- Re-resolve every tracked player's location against the CURRENT caches, rebuilding
+-- LocationState from scratch. Called after `.inm reload` swaps the caches, so a player
+-- already standing in a newly-added (or removed) location is recognised immediately —
+-- without waiting for a zone-change event or relog. Preserves each player's cooldowns
+-- (only their location membership is recomputed).
+function INC.Players.ReresolveAll()
+  INC.State.LocationState = {}
+  for _, t in pairs(INC.State.PlayerTrack) do
+    local player = GetPlayerByGUID(t.guid)
+    t.locationId = nil
+    if player and player:IsInWorld() then
+      t.zoneId = player:GetZoneId()
+      t.areaId = player:GetAreaId()
+      updateLocation(t, player)
+    end
+  end
+end
+
 function INC.Players.Init()
   INC.State.PlayerTrack = {}
   INC.State.LocationState = {}

@@ -35,6 +35,10 @@ function INC.Reload()
   INC.ClampConfig()
   local newCaches = INC.Data.Load()
   INC.Caches = newCaches
+  -- Re-resolve tracked players against the new caches so a player already standing in
+  -- a newly-added location is recognised without a relog. (Creature ON_ADD hooks for a
+  -- brand-new entry still need a full `.reload ale` — ADR-007.)
+  INC.Players.ReresolveAll()
   return summary()
 end
 

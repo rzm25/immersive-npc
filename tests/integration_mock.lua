@@ -443,6 +443,18 @@ do
   for i = 1, 8 do playerEvents[4](4, far[i]) end  -- clean up
 end
 
+-- ---- ReresolveAll re-recognises a player after a location appears on reload ----
+-- Simulate a player who was tracked while their location didn't exist yet (locationId
+-- nil), then a `.inm reload` adds it: ReresolveAll must place them without a relog.
+do
+  local t = INC.State.PlayerTrack[5]
+  t.locationId = nil
+  INC.State.LocationState = {}
+  INC.Players.ReresolveAll()
+  ok(t.locationId == 1, "reresolve: player re-recognised into their location after reload")
+  ok(INC.State.LocationState[1] and INC.State.LocationState[1].players[5], "reresolve: location membership rebuilt")
+end
+
 -- ---- per-player line/group cooldown isolation -------------------------------
 -- One player receiving a line must NOT put a different, nearby player on cooldown.
 -- Two guards, two players, each next to their own guard: A emits (setting A's line +
