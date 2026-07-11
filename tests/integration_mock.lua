@@ -43,7 +43,7 @@ DB.npc_profile = {
 --       team_mask,required_item_tags_lo,required_item_tags_hi,min_item_quality,
 --       cooldown_group,weight,chat_mode,locale,text,enabled
 DB.line = {
-  { 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, "enUS", "Well met, {race}.", 1 },
+  { 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5, 100, 0, "enUS", "Well met, {race}.", 1 },   -- cooldown_group 5
   { 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 100, 1, "enUS", "Mind the guards, {player}.", 1 },
   { 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, "deDE", "German line", 1 },  -- non-enUS: must be skipped
 }
@@ -441,6 +441,27 @@ do
   end
   ok(emitted, "ambient: emits by finding the guard-adjacent player among 8 far players")
   for i = 1, 8 do playerEvents[4](4, far[i]) end  -- clean up
+end
+
+-- ---- per-player line/group cooldown isolation -------------------------------
+-- One player receiving a line must NOT put a different, nearby player on cooldown.
+-- Two guards, two players, each next to their own guard: A emits (setting A's line +
+-- group-5 cooldowns), then B — whose own cooldowns are empty — must still emit. Under
+-- the old global line/group cooldowns, B would have been wrongly blocked.
+do
+  local guard2 = makeCreature({ entry = 68, guidLow = 1002, x = 300, y = 300, z = 10,
+                                mapId = 0, zoneId = 1519, areaId = 0 })
+  creatureEvents[68][36](36, guard2)
+  local pB = makePlayer({ guidLow = 8, name = "Bystander", class = 1, race = 1, team = 0,
+                          x = 301, y = 300, z = 10, mapId = 0, zoneId = 1519, areaId = 0 })
+  playerEvents[3](3, pB)
+  INC.Scheduler.ClearCooldowns()
+  local a = INC.Scheduler.RunAttempt(true, 5)   -- player A (hero) near guard1
+  ok(a == "EMITTED", "cd-isolation: player A emits (got " .. a .. ")")
+  local b = INC.Scheduler.RunAttempt(true, 8)   -- player B near guard2, own cooldowns empty
+  ok(b == "EMITTED", "cd-isolation: player B not blocked by A's line/group cooldown (got " .. b .. ")")
+  playerEvents[4](4, pB)
+  creatureEvents[68][37](37, guard2)
 end
 
 -- ---- heartbeat tick is safe to call and pcall-guarded ----------------------

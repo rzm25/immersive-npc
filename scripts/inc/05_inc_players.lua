@@ -165,6 +165,8 @@ local function track(player)
     areaId = player:GetAreaId(),
     locationId = nil,
     cooldownUntil = 0,
+    lineCd = {},    -- [lineId]  -> untilMs  (per-player; never blocks OTHER players)
+    groupCd = {},   -- [group]   -> untilMs  (per-player)
   }
   INC.State.PlayerTrack[guidLow] = t
   updateLocation(t, player)

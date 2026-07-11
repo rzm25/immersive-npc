@@ -255,8 +255,11 @@ local function selectLine(loc, track, prof, tagLo, tagHi, quality, now)
         and (line.chatMode ~= INC.ChatMode.WHISPER
              or (INC.Config.AllowPersonalWhispers and prof.allowPersonal)) then
       anyContent = true
-      local groupOk = line.cooldownGroup == 0 or (INC.State.GroupCooldown[line.cooldownGroup] or 0) <= now
-      local lineOk = (INC.State.LineCooldown[line.id] or 0) <= now
+      -- Per-PLAYER line/group cooldowns: keep variety for THIS listener without ever
+      -- blocking another player who happens to be nearby (this player's activity must
+      -- not starve everyone else's ambient).
+      local groupOk = line.cooldownGroup == 0 or (track.groupCd[line.cooldownGroup] or 0) <= now
+      local lineOk = (track.lineCd[line.id] or 0) <= now
       if not groupOk then
         blockedGroup = true
       elseif not lineOk then
@@ -403,12 +406,12 @@ local function attemptBody(forced, targetGuidLow)
   -- Emit.
   emit(npc, player, line, track, weaponType)
 
-  -- Apply cooldowns + pacing bookkeeping.
+  -- Apply cooldowns + pacing bookkeeping. Line/group cooldowns are per-player.
   track.cooldownUntil = now + cfg.PlayerCooldownMs
   reg.cooldownUntil = now + cfg.NpcCooldownMs
-  INC.State.LineCooldown[line.id] = now + cfg.LineCooldownMs
+  track.lineCd[line.id] = now + cfg.LineCooldownMs
   if line.cooldownGroup ~= 0 then
-    INC.State.GroupCooldown[line.cooldownGroup] = now + cfg.CooldownGroupMs
+    track.groupCd[line.cooldownGroup] = now + cfg.CooldownGroupMs
   end
   if not forced then
     INC.State.GlobalLastEmitMs = now
@@ -439,12 +442,14 @@ function INC.Scheduler.RunAttempt(forced, targetGuidLow)
 end
 
 function INC.Scheduler.ClearCooldowns()
-  for _, track in pairs(INC.State.PlayerTrack) do track.cooldownUntil = 0 end
+  for _, track in pairs(INC.State.PlayerTrack) do
+    track.cooldownUntil = 0
+    track.lineCd = {}
+    track.groupCd = {}
+  end
   for _, locTable in pairs(INC.State.Registry) do
     for _, reg in pairs(locTable) do reg.cooldownUntil = 0 end
   end
-  INC.State.LineCooldown = {}
-  INC.State.GroupCooldown = {}
   INC.State.GlobalLastEmitMs = 0
   local now = INC.NowMs()
   INC.State.GlobalBucket = U.NewBucket(INC.Config.GlobalBurstMax, INC.Config.GlobalBurstWindowMs, now)
@@ -461,8 +466,7 @@ function INC.Scheduler.Init()
   INC.State.GlobalBucket = U.NewBucket(INC.Config.GlobalBurstMax, INC.Config.GlobalBurstWindowMs, now)
   INC.State.GlobalLastEmitMs = now   -- start the global min-interval clock at boot (no line in the first interval; sane `.inm status`)
   INC.State.LocPacing = {}
-  INC.State.LineCooldown = {}
-  INC.State.GroupCooldown = {}
+  -- Line/group cooldowns are per-player (stored on each PlayerTrack), not global.
 
   -- Cancel any prior heartbeat before creating a new one, so re-entering Boot inside
   -- one Lua state can't leak a timer. (INC.schedulerEventId persists on INC, not on
