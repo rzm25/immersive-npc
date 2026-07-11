@@ -66,6 +66,10 @@ local function loadProfiles(caches, stats)
   local q = WorldDBQuery(
     "SELECT id, creature_entry, creature_guid, location_id, role_mask_lo, role_mask_hi, " ..
     "max_speak_distance, allow_personal_lines, enabled FROM immersive_npc_chat_npc_profile")
+  -- Aggregate "unknown location_id" skips so one missing location prints ONE summary
+  -- line at the end, not one warning per profile row (a bulk profiling pass can
+  -- otherwise flood the log with dozens of identical warnings).
+  local unknownLoc = {}
   eachRow(q, function(row)
     local rowId = row:GetUInt32(0)
     if row:GetUInt8(8) == 0 then return end  -- disabled profile: silently ignore
@@ -73,7 +77,9 @@ local function loadProfiles(caches, stats)
     local locId = row:GetUInt32(3)
     local loc = caches.Locations[locId]
     if not loc then
-      INC.Warn(("npc_profile id %d skipped: references unknown location_id %d"):format(rowId, locId))
+      local u = unknownLoc[locId]
+      if not u then u = { count = 0, firstId = rowId }; unknownLoc[locId] = u end
+      u.count = u.count + 1
       stats.skipped = stats.skipped + 1
       return
     end
@@ -93,6 +99,10 @@ local function loadProfiles(caches, stats)
     list[#list + 1] = prof
     caches.ProfiledEntries[entry] = true
   end)
+  for locId, u in pairs(unknownLoc) do
+    INC.Warn(("%d npc_profile row(s) skipped: unknown location_id %d (e.g. profile id %d) — add that row to immersive_npc_chat_location")
+      :format(u.count, locId, u.firstId))
+  end
 end
 
 -- OR together the role masks of every enabled, personal-capable profile, so a

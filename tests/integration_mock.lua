@@ -37,6 +37,7 @@ DB.location = {
 --              max_speak_distance,allow_personal_lines,enabled
 DB.npc_profile = {
   { 1, 68, 0, 1, 1, 0, 25.0, 1, 1 },     -- entry 68, role GUARD (bit0=1), personal ok
+  { 2, 68, 0, 99, 1, 0, 25.0, 1, 1 },    -- references location 99 (does not exist): must be skipped, not crash
 }
 -- line: id,location_mask,npc_role_mask_lo,npc_role_mask_hi,class_mask,race_mask,
 --       team_mask,required_item_tags_lo,required_item_tags_hi,min_item_quality,
@@ -215,6 +216,7 @@ ok(INC.State and INC.State.booted, "boot: booted flag set")
 ok(INC.Caches.Stats.locations == 1, "boot: 1 location loaded")
 ok(INC.Caches.Stats.lines == 2, "boot: 2 enUS lines (deDE row skipped)")
 ok(INC.Caches.ProfiledEntries[68] == true, "boot: entry 68 profiled")
+ok(INC.Caches.Stats.skipped >= 1, "boot: profile with unknown location_id skipped (aggregated, no crash)")
 ok(creatureEvents[68] and creatureEvents[68][36] and creatureEvents[68][37], "boot: ON_ADD/ON_REMOVE hooked for entry 68")
 ok(luaEvents[INC.schedulerEventId] ~= nil, "boot: heartbeat timer created")
 
