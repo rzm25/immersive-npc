@@ -14,6 +14,9 @@ CASES = [
     ("good_with_safe_comments", """INSERT INTO `t` (`a`,`b`) VALUES
         (1,'x'), -- comma BEFORE comment: safe
         (2,'y');""", False),
+    ("semicolon_inside_string", """INSERT INTO `t` (`a`,`b`) VALUES
+        (1,'Mind the mud; it never comes out.'),
+        (2,'ok');""", False),
     ("value_count_mismatch", """INSERT INTO `t` (`a`,`b`,`c`) VALUES
         (1,2),
         (3,4,5);""", True),

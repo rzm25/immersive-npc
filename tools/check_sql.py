@@ -122,12 +122,31 @@ def split_top_level_commas(body):
     return fields
 
 
+def split_statements(text):
+    """Split on `;` that are OUTSIDE string literals (a semicolon inside dialogue like
+    'Mind the mud; it never comes out.' is not a statement terminator)."""
+    stmts, buf, in_str = [], [], False
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "'":
+            if in_str and i + 1 < n and text[i + 1] == "'":
+                buf.append("''"); i += 2; continue
+            in_str = not in_str
+            buf.append(c); i += 1; continue
+        if c == ";" and not in_str:
+            stmts.append("".join(buf)); buf = []; i += 1; continue
+        buf.append(c); i += 1
+    stmts.append("".join(buf))
+    return stmts
+
+
 def check_file(path):
     problems = []
     with open(path, encoding="utf-8") as fh:
         text = strip_line_comments(fh.read())
 
-    for stmt in text.split(";"):
+    for stmt in split_statements(text):
         m = re.search(r"insert\s+into\s+`?(\w+)`?\s*\(([^)]*)\)\s*values\s*(.*)",
                       stmt, re.IGNORECASE | re.DOTALL)
         if not m:
