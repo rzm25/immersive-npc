@@ -125,7 +125,7 @@ local function loadLines(caches, stats)
   local q = WorldDBQuery(
     "SELECT id, location_mask, npc_role_mask_lo, npc_role_mask_hi, class_mask, race_mask, team_mask, " ..
     "required_item_tags_lo, required_item_tags_hi, min_item_quality, cooldown_group, weight, chat_mode, " ..
-    "locale, text, enabled FROM immersive_npc_chat_line")
+    "locale, text, enabled, min_player_level FROM immersive_npc_chat_line")
   eachRow(q, function(row)
     local id = row:GetUInt32(0)
     if row:GetUInt8(15) == 0 then return end                 -- disabled line
@@ -156,6 +156,7 @@ local function loadLines(caches, stats)
       weight = row:GetUInt32(11),
       chatMode = chatMode,
       text = text,
+      minLevel = row:GetUInt8(16),   -- 0 = no gate; else listener must be >= this
     }
     caches.Lines[#caches.Lines + 1] = line
     -- Prebuild per-location index so the hot path never scans the full line table.

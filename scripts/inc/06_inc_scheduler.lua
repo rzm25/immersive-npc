@@ -252,6 +252,7 @@ local function selectLine(loc, track, prof, tagLo, tagHi, quality, now)
         and U.MatchAny64(prof.roleMaskLo, prof.roleMaskHi, line.roleMaskLo, line.roleMaskHi)
         and U.MatchAll64(tagLo, tagHi, line.itemTagLo, line.itemTagHi)
         and quality >= line.minQuality
+        and ((line.minLevel or 0) == 0 or (track.level or 0) >= line.minLevel)
         and (line.chatMode ~= INC.ChatMode.WHISPER
              or (INC.Config.AllowPersonalWhispers and prof.allowPersonal)) then
       anyContent = true

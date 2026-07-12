@@ -158,6 +158,7 @@ local function track(player)
     guidLow = guidLow,
     classId = class,
     raceId = race,
+    level = player:GetLevel(),
     classBits = classBit(class),
     raceBits = raceBit(race),
     teamBits = (player:GetTeam() == 0) and INC.Team.ALLIANCE or INC.Team.HORDE,
@@ -195,6 +196,7 @@ local function onZoneOrArea(_, player)
   if not t then return end  -- not yet tracked (rare ordering); login will set it
   t.zoneId = player:GetZoneId()
   t.areaId = player:GetAreaId()
+  t.level = player:GetLevel()   -- cheap refresh; keeps the min_player_level gate current
   updateLocation(t, player)
 end
 

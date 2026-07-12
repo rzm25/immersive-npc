@@ -20,7 +20,8 @@ TEAM={1:'Alliance',2:'Horde'}
 ITEM={1:'weapon',2:'2H',4:'shield',8:'ranged',16:'plate',32:'mail',64:'leather',128:'cloth'}
 QUAL={0:'',2:'uncommon+',3:'rare+',4:'epic+',5:'legendary+'}
 MODE={0:'say',1:'whisper',2:'emote'}
-ROLE={0:'any',1:'GUARD',128:'CITIZEN'}
+ROLE={0:'any',1:'GUARD',4:'VENDOR',128:'CITIZEN',256:'OFFICIAL',512:'CRIER',
+      65536:'SUNREAVER',131072:'VIOLET_HOLD',262144:'SKYREAVER',524288:'SKYBREAKER'}
 LOCNAME={0:'ALL capitals',126:'ALL capitals',2:'Stormwind',4:'Ironforge',8:'Darnassus',16:'Orgrimmar',32:'ThunderBluff',64:'Undercity',128:'Dalaran',256:'Darkshire'}
 
 def bits(mask, table):
@@ -51,13 +52,17 @@ for f in sorted(glob.glob('sql/world/updates/*.sql')):
             except: return 0
         text=v[14].strip()
         if text.startswith("'"): text=text[1:-1].replace("''","'")
+        lvl=num(16) if len(v)>16 else 0   # min_player_level (17-col INSERTs only)
         rows.append(dict(id=num(0),loc=num(1),role=num(2),cls=num(4),race=num(5),team=num(6),
-                         item=num(7),minq=num(9),grp=num(10),wt=num(11),mode=num(12),text=text))
+                         item=num(7),minq=num(9),grp=num(10),wt=num(11),mode=num(12),lvl=lvl,text=text))
 
 # group into content sets
+FACTION_ROLES={65536,131072,262144,524288}
 def setkey(r):
-    if r['role']==1: 
+    if r['role']==1:
         return '1. Guards' if r['loc']==0 else '2. Guards (faction/city-specific)'
+    if r['role']==4: return '6. Vendors (all cities)'
+    if r['role'] in FACTION_ROLES: return '7. Dalaran factions (Sunreaver/Violet Hold/Sky-Reaver/Skybreaker)'
     if r['loc']==126: return '3. Citizens (all capitals, not Dalaran)'
     if r['loc']==128: return '4. Dalaran'
     if r['loc']==256: return '5. Darkshire'
@@ -70,9 +75,12 @@ print("Total lines:", len(rows))
 for k in sorted(sets):
     rs=sorted(sets[k], key=lambda r:(r['grp'],r['id']))
     print(f"\n### {k}  ({len(rs)} lines)\n")
-    print("| id | grp | mode | wt | scope | targets | text |")
-    print("|----|-----|------|----|-------|---------|------|")
+    print("| id | role | grp | mode | wt | scope | targets | text |")
+    print("|----|------|-----|------|----|-------|---------|------|")
     for r in rs:
         scope=LOCNAME.get(r['loc'], str(r['loc']))
+        role=ROLE.get(r['role'], str(r['role']))
+        tgt=targets(r['cls'],r['race'],r['team'],r['item'],r['minq'])
+        if r['lvl']: tgt = (tgt+', ' if tgt!='—' else '')+f"level {r['lvl']}+"
         text=r['text'].replace('|','\\|')
-        print(f"| {r['id']} | {r['grp']} | {MODE[r['mode']]} | {r['wt']} | {scope} | {targets(r['cls'],r['race'],r['team'],r['item'],r['minq'])} | {text} |")
+        print(f"| {r['id']} | {role} | {r['grp']} | {MODE[r['mode']]} | {r['wt']} | {scope} | {tgt} | {text} |")

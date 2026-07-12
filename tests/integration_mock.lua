@@ -46,6 +46,9 @@ DB.line = {
   { 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5, 100, 0, "enUS", "Well met, {race}.", 1 },   -- cooldown_group 5
   { 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 100, 1, "enUS", "Mind the guards, {player}.", 1 },
   { 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, "deDE", "German line", 1 },  -- non-enUS: must be skipped
+  -- level-gated line (17th field = min_player_level 75), race_mask 2 (orc only) so it never
+  -- perturbs the human hero's tests; exercised by the level-gate block below.
+  { 4, 0, 1, 0, 0, 2, 0, 0, 0, 0, 9, 100, 0, "enUS", "Only seasoned fighters earn my nod, {race}.", 1, 75 },
 }
 
 local function makeQueryResult(rows)
@@ -124,6 +127,7 @@ local function makePlayer(o)
     x = o.x, y = o.y, z = o.z, mapId = o.mapId, zoneId = o.zoneId, areaId = o.areaId,
     _guidLow = o.guidLow, _guid = "player:" .. o.guidLow, _name = o.name,
     _class = o.class, _race = o.race, _team = o.team, _equip = o.equip or {},
+    _level = o.level or 80,
     alive = true, combat = false, taxi = false,
     gm = o.gm or false, gmVisible = o.gmVisible ~= false,
     gmRank = o.gmRank or 0, phase = o.phase or 1, world = true,
@@ -133,6 +137,7 @@ local function makePlayer(o)
   function p:GetName() return self._name end
   function p:GetClass() return self._class end
   function p:GetRace() return self._race end
+  function p:GetLevel() return self._level end
   function p:GetTeam() return self._team end
   function p:GetZoneId() return self.zoneId end
   function p:GetAreaId() return self.areaId end
@@ -214,7 +219,7 @@ end
 -- ---- boot assertions -------------------------------------------------------
 ok(INC.State and INC.State.booted, "boot: booted flag set")
 ok(INC.Caches.Stats.locations == 1, "boot: 1 location loaded")
-ok(INC.Caches.Stats.lines == 2, "boot: 2 enUS lines (deDE row skipped)")
+ok(INC.Caches.Stats.lines == 3, "boot: 3 enUS lines (deDE row skipped)")
 ok(INC.Caches.ProfiledEntries[68] == true, "boot: entry 68 profiled")
 ok(INC.Caches.Stats.skipped >= 1, "boot: profile with unknown location_id skipped (aggregated, no crash)")
 ok(creatureEvents[68] and creatureEvents[68][36] and creatureEvents[68][37], "boot: ON_ADD/ON_REMOVE hooked for entry 68")
@@ -410,7 +415,7 @@ creatureEvents[68][36](36, guard)  -- put it back
 -- ---- `.inm reload` swaps content atomically -------------------------------
 DB.line[1][15] = "Greetings, {class}."   -- change line 1 text
 local sum = INC.Reload()
-ok(sum:find("2 lines"), "reload: summary reports 2 lines")
+ok(sum:find("3 lines"), "reload: summary reports 3 lines")
 local found = false
 for _, l in ipairs(INC.Caches.Lines) do if l.text == "Greetings, {class}." then found = true end end
 ok(found, "reload: new line text is live in caches")
@@ -474,6 +479,39 @@ do
   ok(b == "EMITTED", "cd-isolation: player B not blocked by A's line/group cooldown (got " .. b .. ")")
   playerEvents[4](4, pB)
   creatureEvents[68][37](37, guard2)
+end
+
+-- ---- min_player_level gate (the Violet Hold "75+ only" requirement) --------
+-- Line 4 is gated at level 75 and race-locked to orc. A level-74 orc must never
+-- receive it (only the ungated lines 1/2); raised to 80, it becomes eligible.
+do
+  local vguard = makeCreature({ entry = 68, guidLow = 1003, x = 500, y = 500, z = 10,
+                                mapId = 0, zoneId = 1519, areaId = 0 })
+  creatureEvents[68][36](36, vguard)
+  local orc = makePlayer({ guidLow = 9, name = "Grukk", class = 1, race = 2, team = 1,
+                           level = 74, x = 501, y = 500, z = 10, mapId = 0, zoneId = 1519, areaId = 0,
+                           equip = { [15] = makeItem(2, 0, 21, 2) } })
+  playerEvents[3](3, orc)
+  local GATED = "Only seasoned fighters earn my nod, orc."
+  local sawLow = false
+  for _ = 1, 40 do
+    INC.Scheduler.ClearCooldowns()
+    vguard.lastSay = nil
+    INC.Scheduler.RunAttempt(true, 9)
+    if vguard.lastSay == GATED then sawLow = true end
+  end
+  ok(not sawLow, "level-gate: level-74 listener never receives the 75+ line")
+  INC.State.PlayerTrack[9].level = 80
+  local sawHigh = false
+  for _ = 1, 80 do
+    INC.Scheduler.ClearCooldowns()
+    vguard.lastSay = nil
+    INC.Scheduler.RunAttempt(true, 9)
+    if vguard.lastSay == GATED then sawHigh = true; break end
+  end
+  ok(sawHigh, "level-gate: level-80 listener can receive the 75+ line")
+  playerEvents[4](4, orc)
+  creatureEvents[68][37](37, vguard)
 end
 
 -- ---- heartbeat tick is safe to call and pcall-guarded ----------------------

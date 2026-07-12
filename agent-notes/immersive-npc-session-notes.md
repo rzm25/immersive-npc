@@ -99,7 +99,37 @@ API-correct (ALE is Eluna-lineage; only internal C signatures differ). Changes m
 - Integration harness now **46** assertions (added console-nil-player + TrackOnline).
 - Handoff commands corrected for the owner (script dir, `.reload ale`).
 
-### Handoff state / next steps
+## Session 3 (2026-07-12): live-feedback fixes + eligibility + faction content
+
+Owner ran the live server hard and gave a big feedback batch (logged in full in
+`agent-notes/FEEDBACK_LOG.md`). Delivered:
+
+- **Diagnosed the "1 line / ~10 min" complaint.** Emission RATE is gated by pacing, NOT
+  cooldowns: `SchedulerTickMs`, `GlobalMinIntervalMs` (45s), the **global token bucket**
+  (2 per 180s ≈ 1/90s, *shared server-wide* — the real bottleneck on a bot-populated server),
+  per-location `min_interval_ms`/`max_lines_per_10min`, and `PopulationScaling` (~1/4min at
+  pop≈1). Lowering group cooldown did nothing because that only controls per-listener variety.
+  `.inm force` bypasses ONLY those pacing gates — which is why force works when natural won't.
+  Fix is config (owner has `01_inc_config.lua` skip-worktree'd), values given in handoff.
+- **Root-caused every "silent NPC" report:** the entry wasn't profiled. Added
+  `sql/world/updates/2026_07_12_00_eligibility.sql` — profiles the named Darkshire + Dalaran
+  NPCs (by the exact spawn guids given), a broad **VENDOR** sweep (npcflag bit 128, bounded to
+  our locations' maps), and the four Dalaran factions by name+guid. Idempotent via an
+  `inm-auto:*` comment marker. **Uses `creature.id1`** (verify vs `id` on older cores).
+- **New `min_player_level` line gate** (schema + loader col 16 + `track.level` + `selectLine`,
+  nil-guarded both sides) for the Violet Hold "speak only to 75+" requirement. Integration
+  test added (level-74 never hears it; level-80 does). Tests: unit 66, integration **58**.
+- **New role bits:** VENDOR=4 (was already reserved), SUNREAVER=65536, VIOLET_HOLD=131072,
+  SKYREAVER=262144, SKYBREAKER=524288. `inc_base.sql` mirror extended.
+- **Content (STAGED functional tranches; owner tunes tone via CONTENT_LINES.md, then fill to
+  target):** vendors 42 (→200), Sunreaver 26, Violet Hold 20, Sky-Reaver 24, Skybreaker 24,
+  Darkshire +20 (→42). Opposing-faction lines via `team_mask`. Total content now **382 lines**.
+- CONTENT_LINES.md regenerated (generator now names the new roles + shows the level gate).
+
+**Next:** fill each new pool to its target count; owner to run the eligibility SQL + content
+SQL, `.reload ale` (then a restart for full Dalaran/Darkshire registration), and re-test.
+
+### Handoff state / next steps (Session 2)
 - **Pushed** the module commit `60dfc9e` to `origin/main` (github.com/rzm25/immersive-npc).
   The CI workflow is a SEPARATE local commit `5558460` that could NOT be pushed — the
   provided PAT lacks the `workflow` scope. Owner must push it with a workflow-scoped token

@@ -14,7 +14,14 @@ it and note it in `agent-notes/`.
 ## Custom tables (world DB) — full schema in `sql/world/base/inc_base.sql`
 - `immersive_npc_chat_location` — hubs. PK `id` (< 32). map/zone/area + pacing caps.
 - `immersive_npc_chat_npc_profile` — profiled creature entries → role mask, speak distance, whisper flag.
-- `immersive_npc_chat_line` — content rows → masks + cooldown group + weight + chat mode + text.
+- `immersive_npc_chat_line` — content rows → masks + cooldown group + weight + chat mode + text
+  + **`min_player_level`** (0 = no gate; else listener must be ≥ this — the Violet Hold "75+" pool).
+
+### Role bit values (`role_mask_lo`, positions in `inc_base.sql` mirror)
+GUARD=1 · VENDOR=4 · CITIZEN=128 · OFFICIAL/EMISSARY=256 · CRIER=512 ·
+SUNREAVER=65536 · VIOLET_HOLD=131072 · SKYREAVER=262144 · SKYBREAKER=524288.
+Profiles are attached by `sql/world/updates/2026_07_12_00_eligibility.sql` (idempotent via a
+`comment LIKE 'inm-auto:%'` marker; derives entry from spawn guid via `creature.id1`).
 
 ## Config keys
 - Live in `scripts/inc/01_inc_config.lua` as `INC.Config` (no `.conf`). Clamped by `INC.ClampConfig()`.

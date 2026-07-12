@@ -26,7 +26,10 @@
 -- npc_role_mask (ANY-of, split-64, POSITIONS): GUARD=0 INNKEEPER=1 VENDOR=2
 --   TRAINER=3 BANKER=4 AUCTIONEER=5 FLIGHTMASTER=6 CITIZEN=7 OFFICIAL=8 CRIER=9
 --   BARTENDER=10 COOK=11 BLACKSMITH=12 GUILD_MASTER=13 STABLE_MASTER=14 WATCH=15
---   -> role_mask_lo bit VALUE = 1<<pos (GUARD => role_mask_lo = 1)
+--   SUNREAVER=16 VIOLET_HOLD=17 SKYREAVER=18 SKYBREAKER=19   (Dalaran faction voices)
+--   -> role_mask_lo bit VALUE = 1<<pos (GUARD => 1, VENDOR => 4, CITIZEN => 128,
+--      OFFICIAL => 256, CRIER => 512, SUNREAVER => 65536, VIOLET_HOLD => 131072,
+--      SKYREAVER => 262144, SKYBREAKER => 524288)
 -- required_item_tags (ALL-of, split-64, POSITIONS -> lo bit VALUE = 1<<pos):
 --   HAS_WEAPON=0(1) HAS_TWO_HAND=1(2) HAS_SHIELD=2(4) HAS_RANGED=3(8)
 --   PLATE=4(16) MAIL=5(32) LEATHER=6(64) CLOTH=7(128) SWORD=8(256) AXE=9(512)
@@ -34,6 +37,8 @@
 --   BOW=15(32768) GUN=16(65536) CROSSBOW=17(131072) WAND=18(262144)
 --   TABARD=19(524288) OFFHAND_FRILL=20(1048576)
 -- min_item_quality: 0 poor .. 2 uncommon .. 3 rare .. 4 epic .. 5 legendary .. 7 heirloom
+-- min_player_level: 0 = no gate; otherwise the listener's level must be >= this
+--                   (used for the Violet Hold "speak only to 75+" pool)
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `immersive_npc_chat_location` (
@@ -73,6 +78,7 @@ CREATE TABLE IF NOT EXISTS `immersive_npc_chat_line` (
   `required_item_tags_lo` INT UNSIGNED NOT NULL DEFAULT 0,
   `required_item_tags_hi` INT UNSIGNED NOT NULL DEFAULT 0,
   `min_item_quality` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `min_player_level` TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 = no level gate; else listener must be >= this
   `cooldown_group` INT UNSIGNED NOT NULL DEFAULT 0,
   `weight` INT UNSIGNED NOT NULL DEFAULT 100,
   `chat_mode` TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 say, 1 whisper, 2 emote
