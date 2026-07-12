@@ -1,0 +1,72 @@
+# CI for lua-immersive-npc-chat — an ALE/Eluna *Lua* module. There is no C++ to
+# compile and no loader symbol (contrast the template's C++ build job): deployment is
+# copying scripts/inc/ into the server's Lua scripts directory. So CI does the two
+# checks that actually protect this module:
+#   1. lua  — luacheck (no implicit globals) + the pure unit tests + the offline
+#             mock-engine integration harness, all under standalone lua5.2.
+#   2. sql  — the structural checker (self-tested) + a real apply of the schema and
+#             seeds into an ephemeral MySQL, so a column/parse error fails CI here
+#             instead of the owner's import.
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lua:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.2 + luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.2 liblua5.2-dev luarocks
+          sudo luarocks install luacheck LUA_INCDIR=/usr/include/lua5.2
+      - name: luacheck (forbids implicit globals — spec §11)
+        run: luacheck scripts/inc tests .luacheckrc
+      - name: Unit tests (pure Lua)
+        run: lua5.2 tests/run_tests.lua
+      - name: Integration harness (mock engine)
+        run: lua5.2 tests/integration_mock.lua
+
+  sql:
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: [ "3306:3306" ]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - name: SQL structural self-test (the linter must be able to fail)
+        run: python3 tools/check_sql_selftest.py
+      - name: SQL structural check (schema + seeds)
+        run: python3 tools/check_sql.py sql/world/base/*.sql sql/world/updates/*.sql
+      - name: Real MySQL apply (parse/column errors fail here, not on import)
+        run: |
+          mysql -h127.0.0.1 -uroot -proot -e "CREATE DATABASE acore_world DEFAULT CHARSET utf8mb4;"
+          mysql -h127.0.0.1 -uroot -proot acore_world < sql/world/base/inc_base.sql
+          for f in sql/world/updates/*.sql; do
+            echo "== $f"
+            mysql -h127.0.0.1 -uroot -proot acore_world < "$f"
+          done
+          # Re-apply once to prove idempotency (seeds must be safely re-runnable).
+          for f in sql/world/updates/*.sql; do
+            mysql -h127.0.0.1 -uroot -proot acore_world < "$f"
+          done
+          echo "row counts:"
+          mysql -h127.0.0.1 -uroot -proot acore_world -e "
+            SELECT 'locations' AS t, COUNT(*) AS n FROM immersive_npc_chat_location
+            UNION ALL SELECT 'profiles', COUNT(*) FROM immersive_npc_chat_npc_profile
+            UNION ALL SELECT 'lines', COUNT(*) FROM immersive_npc_chat_line;"
