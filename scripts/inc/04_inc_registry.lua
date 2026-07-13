@@ -102,11 +102,15 @@ function INC.Registry.SeedFromPlayers()
     if track.locationId then
       local player = GetPlayerByGUID(track.guid)
       if player and player:IsInWorld() then
-        for entry in pairs(caches.ProfiledEntries) do
-          local creatures = player:GetCreaturesInRange(SEED_RANGE, entry, 0, 1)
-          if type(creatures) == "table" then
-            for _, creature in pairs(creatures) do
-              registerCreature(creature)
+        -- ONE grid search per player (entry filter 0 = any), then keep only profiled
+        -- entries in Lua. The per-entry form did a grid search for EACH profiled entry,
+        -- which is fine for a handful of guards but O(entries*players) once a broad role
+        -- (e.g. every vendor) is profiled — a heavy `.reload ale` on a populated server.
+        local creatures = player:GetCreaturesInRange(SEED_RANGE, 0, 0, 1)
+        if type(creatures) == "table" then
+          for _, creature in pairs(creatures) do
+            if caches.ProfiledEntries[creature:GetEntry()] then
+              registerCreature(creature)   -- re-validates location + profile; dedups on guidLow
             end
           end
         end
