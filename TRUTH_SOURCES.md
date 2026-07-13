@@ -8,6 +8,7 @@ it and note it in `agent-notes/`.
 - **Module:** `lua-immersive-npc-chat` — immersive, context-aware NPC ambience chat.
 - **Repo:** `github.com/rzm25/immersive-npc` (working dir `/workspaces/sandyb/immersive-npc`).
 - **Engine:** **ALE** (`azerothcore/mod-ale`), Lua 5.2 (pin in [docs/SOURCES.md](docs/SOURCES.md)). Lua-only — no C++ build, no loader symbol. Scripts → `ALE.ScriptPath` (`lua_scripts`); reload `.reload ale`; engine conf `mod_ale.conf`.
+- **Deploy target (live server `peri0`):** the whole `scripts/inc/` set lives in **`/opt/azerothcore/server/bin/lua_scripts/immersive-npc/`** — ONE directory. ALE loads `ScriptPath` recursively and errors on duplicate basenames, so **never** leave loose copies in the `lua_scripts/` root or deploy a subset next to the full set (breaks load with nil-upvalue errors — shared gotcha #15). Deploy all files together, in place. `01_inc_config.lua` there is operator-tuned + `--skip-worktree`'d — don't overwrite it.
 - **Reserved ID block:** **9506xx** (`/source/ID_RANGES.md`). v1 uses **no** custom
   creature/spell/quest IDs — it profiles STOCK creatures. Block held for future custom NPCs (e.g. a Town Crier).
 

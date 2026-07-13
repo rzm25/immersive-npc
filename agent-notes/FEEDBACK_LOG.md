@@ -63,6 +63,25 @@ range. Fix = add profile rows. Delivered in `sql/world/updates/2026_07_12_00_eli
 GUARD=1 · CITIZEN=128 · OFFICIAL/EMISSARY=256 · CRIER=512 · **VENDOR=4** · **SUNREAVER=65536** ·
 **VIOLET_HOLD=131072** · **SKYREAVER=262144** · **SKYBREAKER=524288** (all `role_mask_lo`).
 
+### Live deploy findings (2026-07-13)
+- **✅ SQL imported clean.** The import loop ran all 5 files without `break` → the
+  `creature.id1`-based eligibility profiling applied, confirming **`id1` is the entry column**
+  on this core (no swap needed). `min_player_level` column present.
+- **⚠️ Vendor sweep = 4366 profile rows** (`inm-auto:vendor`), i.e. ~1000–1500 distinct hooked
+  vendor entries. Steady-state cost ≈ 0 (ON_ADD only on grid load), but it made
+  `SeedFromPlayers` (the `.reload ale` path) O(entries×players). **Fixed in code:** seed now does
+  ONE `GetCreaturesInRange(0)` per player + a `ProfiledEntries` hash filter (commit 9c08249).
+  Faction counts healthy: sunreaver 10, violethold 2, skyreaver 2, skybreaker 6, dalaran-named 17,
+  darkshire-named 4, vendor-named 1 (entries; the 8 Violet Hold guard spawns share 2 templates).
+- **⚠️ DB had 349 lines vs repo's 381** → an older content file (likely the 32 citizen lines)
+  wasn't fully imported historically. Fix: re-import ALL `sql/world/updates/*.sql` (every file is
+  idempotent: DELETE range + INSERT).
+- **🐛 DEPLOY BREAK (my error):** the `cp … /lua_scripts/` command dropped loose `03/05/06` in the
+  flat root while the full set lives in `lua_scripts/immersive-npc/`. ALE loads ScriptPath
+  recursively → `already loaded, rename either file` + nil `INC.Util`/`INC.ItemTagPos` (siblings
+  loaded out of order). Correct target is the **`immersive-npc/` subdir, whole set together**.
+  Recorded in `/source` gotcha #15 and TRUTH_SOURCES.
+
 ### Content counts are STAGED
 Each new pool is seeded functional this session (so the NPCs speak), then filled to the requested
 target counts next. Owner can tune tone via `docs/CONTENT_LINES.md` before the pools are ballooned.
