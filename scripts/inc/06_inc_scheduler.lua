@@ -1,10 +1,17 @@
--- 06_inc_scheduler.lua — event-driven heartbeat, selection pipeline, cooldowns,
--- final validation, emission, metrics.
+-- 06_inc_scheduler.lua — event-driven heartbeat, PER-PLAYER emission, cooldowns,
+-- final validation, metrics.
+--
+-- Emission model (spec v2): every heartbeat the scheduler sweeps players in populated
+-- hubs and emits for each whose PERSONAL cadence is due, up to MaxEmitsPerTick this
+-- tick. Pacing is per-player (arrival line, then an escalating personal gap) + per-NPC
+-- (anti-repeat), NOT a single server-wide throttle — so a hub with 250 arrivals can
+-- greet them all while each individual still hears lines only rarely. (The original v1
+-- model emitted at most one line per tick server-wide, which starved individuals on a
+-- populated server — ADR-011.)
 --
 -- Heartbeat rule (spec §4.7, the single most important Lua-side perf rule): the
 -- heartbeat is CreateLuaEvent(fn, SchedulerTickMs, 0) — a repeating timer. We NEVER
--- register WORLD_EVENT_ON_UPDATE (13); that would cross the C++->Lua bridge ~20×/s
--- to do nothing.
+-- register WORLD_EVENT_ON_UPDATE (13); that would cross the C++->Lua bridge ~20×/s.
 --
 -- Timer/global API verified against S1 pin (GlobalMethods.h @ e36707d):
 --   id = CreateLuaEvent(fn, delayMs, repeats)   repeats 0 = infinite; returns event id
@@ -57,107 +64,24 @@ local RACE_NAME = {
 
 local CHAT_MAX_BYTES = 255           -- server chat line ceiling
 local LANG_UNIVERSAL = 0
-local LOCATION_BURST = 2             -- per-location token-bucket capacity (spec §4.6)
 
 -- Reusable scratch arrays — never re-allocated per tick (spec §11). Each is paired
 -- with an explicit count so we read only [1..n].
-local sLoc = {}
-local sPlayers = {}
 local sNpc, sNpcProf = {}, {}
 local sLine = {}
 local replScratch = { player = "", class = "", race = "", weapon_type = "" }
-
--- ---------------------------------------------------------------------------
--- Per-location pacing state
--- ---------------------------------------------------------------------------
-
-local function locPacing(locId)
-  local p = INC.State.LocPacing[locId]
-  if not p then
-    p = { lastEmitMs = 0, emitTimes = {},
-          bucket = U.NewBucket(LOCATION_BURST, LOCATION_BURST * 60000, INC.NowMs()) }
-    INC.State.LocPacing[locId] = p
-  end
-  return p
-end
-
--- Count emit timestamps within `windowMs` of now (for the per-10min hard cap).
-local function countRecent(times, now, windowMs)
-  local n = 0
-  for i = 1, #times do
-    if now - times[i] < windowMs then n = n + 1 end
-  end
-  return n
-end
 
 -- ---------------------------------------------------------------------------
 -- Selection stages. Each returns the pick (or nil) plus, on failure, whether a
 -- candidate existed but was blocked by cooldown (to attribute the right metric).
 -- ---------------------------------------------------------------------------
 
--- Eligible locations: enabled, populated, and (unless forced) pacing-clear.
-local function selectLocation(cfg, now, forced)
-  local n = 0
-  local anyPopulated, anyBlocked = false, false
-  for _, loc in ipairs(INC.Caches.LocationList) do
-    local ls = INC.State.LocationState[loc.id]
-    local count = ls and ls.count or 0
-    if count > 0 then
-      anyPopulated = true
-      local ok = true
-      if not forced then
-        local pacing = locPacing(loc.id)
-        -- Per-location pacing is taken straight from the DB row (immersive_npc_chat_location):
-        -- min_interval_ms and max_lines_per_10min are the authoritative per-city knobs, so
-        -- an operator's `.inm reload` after editing them takes effect. The server-wide
-        -- throttle is the config Global* gate, applied separately in attemptBody.
-        local floorMs = loc.minIntervalMs
-        local cap = loc.maxLinesPer10Min
-        if now - pacing.lastEmitMs < floorMs then
-          ok = false
-        elseif countRecent(pacing.emitTimes, now, 600000) >= cap then
-          ok = false
-        elseif cfg.PopulationScaling.Enable then
-          local ps = cfg.PopulationScaling
-          local perMin = U.PopulationPerMinute(count, ps.BasePerMinute, ps.LogScale, ps.MaxPerMinute)
-          if perMin <= 0 then
-            ok = false
-          else
-            pacing.bucket.refillWindowMs = pacing.bucket.capacity * 60000 / perMin
-            if not U.BucketPeek(pacing.bucket, now) then ok = false end
-          end
-        end
-      end
-      if ok then
-        n = n + 1
-        sLoc[n] = loc
-      else
-        anyBlocked = true
-      end
-    end
-  end
-  if n == 0 then
-    if anyPopulated and anyBlocked then return nil, "LOCATION_COOLDOWN" end
-    return nil, "NO_ACTIVE_LOCATION"
-  end
-  -- Uniform pick over the eligible set. Population already gates the emission RATE
-  -- per location (the bucket window above), so it must not also bias the choice —
-  -- that would double-count busy hubs.
-  return sLoc[math.random(1, n)], nil
-end
-
--- How many eligible players to try per tick when looking for one standing near a
--- guard. On a populated/bot server most players aren't next to a guard, so trying a
--- single random one wastes the tick (NO_NEARBY_NPC). We try several so the configured
--- rate is actually reachable; still bounded and pure-arithmetic.
-local MAX_PLAYER_TRIES = 12
-
 -- Candidate NPC: in the location's registry, on the player's map, within the cheap
 -- squared-distance pre-filter (cached spawn pos), cooldown-clear. Picks one at
 -- random among candidates. Returns reg entry + its live profile.
 -- NOTE: the per-NPC cooldown is honored even for a forced attempt — `.inm force`
--- bypasses only the global/location PACING, not per-entity cooldowns, so forcing
--- twice is blocked until `.inm cooldown clear` (TESTPLAN matrix 4).
+-- bypasses only the player's own cadence, not per-entity cooldowns, so forcing twice
+-- against a lone NPC is blocked until `.inm cooldown clear` (TESTPLAN matrix 4).
 local function selectNpc(loc, player, cfg, now)
   local px, py, pz = player:GetX(), player:GetY(), player:GetZ()
   local pmap = player:GetMapId()
@@ -188,53 +112,6 @@ local function selectNpc(loc, player, cfg, now)
   end
   local i = math.random(1, n)
   return sNpc[i], sNpcProf[i], nil
-end
-
--- Pick an eligible player in the location who has a nearby speakable guard. Gathers
--- cooldown-clear players, then tries up to MAX_PLAYER_TRIES of them in random order
--- (partial Fisher-Yates over the scratch array — no allocation) until one has a
--- candidate NPC. If a target guid is given (force self), only that player is tried.
--- Returns track, player, reg, prof (or nils + a reason code).
-local function pickPlayerWithNpc(loc, cfg, now, targetGuidLow)
-  local ls = INC.State.LocationState[loc.id]
-  if not ls or ls.count == 0 then return nil, nil, nil, nil, "NO_ACTIVE_PLAYER" end
-  local n = 0
-  local anyBlocked = false
-  for guidLow in pairs(ls.players) do
-    if not targetGuidLow or guidLow == targetGuidLow then
-      local track = INC.State.PlayerTrack[guidLow]
-      if track then
-        if track.cooldownUntil <= now then
-          n = n + 1
-          sPlayers[n] = track
-        else
-          anyBlocked = true
-        end
-      end
-    end
-  end
-  if n == 0 then
-    if anyBlocked then return nil, nil, nil, nil, "PLAYER_COOLDOWN" end
-    return nil, nil, nil, nil, "NO_ACTIVE_PLAYER"
-  end
-
-  local tries = n < MAX_PLAYER_TRIES and n or MAX_PLAYER_TRIES
-  local lastFail = "NO_NEARBY_NPC"
-  local sawPlayer = false
-  for i = 1, tries do
-    local j = math.random(i, n)
-    sPlayers[i], sPlayers[j] = sPlayers[j], sPlayers[i]
-    local track = sPlayers[i]
-    local player = GetPlayerByGUID(track.guid)
-    if player and player:IsInWorld() then
-      sawPlayer = true
-      local reg, prof, nFail = selectNpc(loc, player, cfg, now)
-      if reg then return track, player, reg, prof, nil end
-      lastFail = nFail
-    end
-  end
-  if not sawPlayer then return nil, nil, nil, nil, "NO_ACTIVE_PLAYER" end
-  return nil, nil, nil, nil, lastFail
 end
 
 -- Matching line for (player context, npc role). Two-stage: content match first
@@ -347,133 +224,130 @@ local function emit(npc, player, line, track, weaponType)
 end
 
 -- ---------------------------------------------------------------------------
--- The attempt (heartbeat body AND `.inm force`). forced=true bypasses the global +
--- location PACING gates but still honors per-player/npc/line/group cooldowns and
--- full final validation (so `.inm force` twice is blocked until `.inm cooldown
--- clear` — TESTPLAN matrix 4). Returns the outcome reason code.
+-- Per-player emission (spec v2). Emit ONE line for a specific player standing in
+-- `loc`, if a nearby speakable NPC and a matching, cooldown-clear line exist and
+-- final validation passes. On success applies the player's ESCALATING cadence (their
+-- next line is delayed by PlayerCadenceMs indexed by how many they've heard this
+-- visit) plus the per-NPC / per-line / per-group anti-repeat cooldowns. Returns the
+-- reason code; the caller counts the metric. Used by both the tick and `.inm force`.
 -- ---------------------------------------------------------------------------
 
-local function attemptBody(forced, targetGuidLow)
-  local cfg = INC.Config
-  local metrics = INC.State.Metrics
-  local now = INC.NowMs()
+local function emitForPlayer(loc, track, player, cfg, now)
+  local reg, prof, nFail = selectNpc(loc, player, cfg, now)
+  if not reg then return nFail end
 
-  local function done(reason)
-    metrics[reason] = (metrics[reason] or 0) + 1
-    return reason
-  end
-
-  if not cfg.Enable then return done("GLOBAL_COOLDOWN") end
-
-  -- Global gate (peek only; consumed on success) — skipped when forced.
-  if not forced then
-    if now - (INC.State.GlobalLastEmitMs or 0) < cfg.GlobalMinIntervalMs then
-      return done("GLOBAL_COOLDOWN")
-    end
-    if not U.BucketPeek(INC.State.GlobalBucket, now) then
-      return done("GLOBAL_COOLDOWN")
-    end
-  end
-
-  -- Location.
-  local loc, locFail
-  if targetGuidLow then
-    local track = INC.State.PlayerTrack[targetGuidLow]
-    if not track or not track.locationId then return done("NO_ACTIVE_LOCATION") end
-    loc = INC.Caches.Locations[track.locationId]
-    if not loc then return done("NO_ACTIVE_LOCATION") end
-  else
-    loc, locFail = selectLocation(cfg, now, forced)
-    if not loc then return done(locFail) end
-  end
-
-  -- Player + NPC: find an eligible player who has a nearby speakable guard.
-  local track, player, reg, prof, selFail = pickPlayerWithNpc(loc, cfg, now, targetGuidLow)
-  if not track then return done(selFail) end
-
-  -- Lazy equipment scan — the chosen player, this instant (spec §4.5). Done only after
-  -- a valid player+NPC pair is found, so wasted ticks cost no scan.
+  -- Lazy equipment scan — this player, this instant (spec §4.5). Only after a nearby
+  -- NPC is found, so a due player with no NPC in range costs no scan.
   local tagLo, tagHi, quality, weaponType = INC.Players.ScanEquipment(player)
 
-  -- Line.
   local line, lFail = selectLine(loc, track, prof, tagLo, tagHi, quality, now)
-  if not line then return done(lFail) end
+  if not line then return lFail end
 
-  -- Final validation.
-  if not validatePlayer(player, loc) then return done("FINAL_VALIDATION_FAILED_PLAYER") end
+  if not validatePlayer(player, loc) then return "FINAL_VALIDATION_FAILED_PLAYER" end
   local npc, vFail = validateNpc(player, reg, prof, cfg)
-  if not npc then return done(vFail) end
+  if not npc then return vFail end
 
-  -- Emit.
   emit(npc, player, line, track, weaponType)
 
-  -- Apply cooldowns + pacing bookkeeping. Line/group cooldowns are per-player.
-  track.cooldownUntil = now + cfg.PlayerCooldownMs
+  -- Escalating per-player cadence: the more this player has already heard THIS visit,
+  -- the longer until their next line (last value repeats). Reset to 0 on arrival
+  -- (05_inc_players.updateLocation), so a fresh visit starts responsive again.
+  track.emitCount = (track.emitCount or 0) + 1
+  local cad = cfg.PlayerCadenceMs
+  track.nextEligibleMs = now + (cad[track.emitCount] or cad[#cad])
   reg.cooldownUntil = now + cfg.NpcCooldownMs
   track.lineCd[line.id] = now + cfg.LineCooldownMs
   if line.cooldownGroup ~= 0 then
     track.groupCd[line.cooldownGroup] = now + cfg.CooldownGroupMs
   end
-  if not forced then
-    INC.State.GlobalLastEmitMs = now
-    U.BucketTryConsume(INC.State.GlobalBucket, now)
-    local pacing = locPacing(loc.id)
-    pacing.lastEmitMs = now
-    pacing.emitTimes[#pacing.emitTimes + 1] = now
-    -- prune the 10-min ring so it can't grow unbounded
-    if #pacing.emitTimes > 64 then
-      local keep = {}
-      for i = 1, #pacing.emitTimes do
-        if now - pacing.emitTimes[i] < 600000 then keep[#keep + 1] = pacing.emitTimes[i] end
-      end
-      pacing.emitTimes = keep
-    end
-    U.BucketTryConsume(pacing.bucket, now)
-  end
 
   if INC.Config.Debug then
     INC.DebugLog(("emitted line %d at '%s' -> %s"):format(line.id, loc.name, tostring(player:GetName())))
   end
-  return done("EMITTED")
+  return "EMITTED"
 end
 
--- Public entry for `.inm force`. Returns the outcome reason.
-function INC.Scheduler.RunAttempt(forced, targetGuidLow)
-  return attemptBody(forced, targetGuidLow)
+-- Heartbeat body: sweep every populated hub and, for each player whose personal cadence
+-- is DUE, emit one line — up to MaxEmitsPerTick emissions this tick (bounds a mass-arrival
+-- burst; the rest are served next tick). A due player with no speakable NPC in range yet
+-- is pushed out by RetryBackoffMs so we recheck them soon (walk-up responsiveness) without
+-- rescanning the registry for them every single tick. This is O(players in hubs) per tick,
+-- with the expensive NPC scan + equipment scan only on the (bounded) due set.
+local function tick()
+  local cfg = INC.Config
+  if not cfg.Enable then return end
+  local now = INC.NowMs()
+  local metrics = INC.State.Metrics
+  local budget = cfg.MaxEmitsPerTick
+  local emitted = 0
+  for _, loc in ipairs(INC.Caches.LocationList) do
+    local ls = INC.State.LocationState[loc.id]
+    if ls and ls.count > 0 then
+      for guidLow in pairs(ls.players) do
+        local track = INC.State.PlayerTrack[guidLow]
+        if track and (track.nextEligibleMs or 0) <= now then
+          local player = GetPlayerByGUID(track.guid)
+          if player and player:IsInWorld() then
+            local reason = emitForPlayer(loc, track, player, cfg, now)
+            metrics[reason] = (metrics[reason] or 0) + 1
+            if reason == "EMITTED" then
+              emitted = emitted + 1
+              if emitted >= budget then return end
+            else
+              track.nextEligibleMs = now + cfg.RetryBackoffMs  -- recheck soon, don't rescan every tick
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+-- Public entry for `.inm force [self]`. Bypasses the player's cadence (emits on demand)
+-- but still honors per-NPC / line / group cooldowns + full validation, so forcing twice
+-- against a lone NPC is blocked by NPC cooldown until `.inm cooldown clear` (TESTPLAN
+-- matrix 4). Commands only ever force the GM's own guid. Returns the outcome reason.
+function INC.Scheduler.RunAttempt(_forced, targetGuidLow)
+  local cfg = INC.Config
+  local now = INC.NowMs()
+  local metrics = INC.State.Metrics
+  local function done(reason)
+    metrics[reason] = (metrics[reason] or 0) + 1
+    return reason
+  end
+  if not cfg.Enable then return done("GLOBAL_COOLDOWN") end
+  if not targetGuidLow then return done("NO_ACTIVE_PLAYER") end
+  local track = INC.State.PlayerTrack[targetGuidLow]
+  if not track or not track.locationId then return done("NO_ACTIVE_LOCATION") end
+  local loc = INC.Caches.Locations[track.locationId]
+  if not loc then return done("NO_ACTIVE_LOCATION") end
+  local player = GetPlayerByGUID(track.guid)
+  if not player or not player:IsInWorld() then return done("NO_ACTIVE_PLAYER") end
+  return done(emitForPlayer(loc, track, player, cfg, now))
 end
 
 function INC.Scheduler.ClearCooldowns()
   for _, track in pairs(INC.State.PlayerTrack) do
-    track.cooldownUntil = 0
+    track.emitCount = 0
+    track.nextEligibleMs = 0     -- due immediately again
     track.lineCd = {}
     track.groupCd = {}
   end
   for _, locTable in pairs(INC.State.Registry) do
     for _, reg in pairs(locTable) do reg.cooldownUntil = 0 end
   end
-  INC.State.GlobalLastEmitMs = 0
-  local now = INC.NowMs()
-  INC.State.GlobalBucket = U.NewBucket(INC.Config.GlobalBurstMax, INC.Config.GlobalBurstWindowMs, now)
-  for _, p in pairs(INC.State.LocPacing) do
-    p.lastEmitMs = 0
-    p.emitTimes = {}
-    p.bucket = U.NewBucket(LOCATION_BURST, LOCATION_BURST * 60000, now)
-  end
 end
 
 function INC.Scheduler.Init()
-  local now = INC.NowMs()
   INC.State.Metrics = INC.Scheduler.NewMetrics()
-  INC.State.GlobalBucket = U.NewBucket(INC.Config.GlobalBurstMax, INC.Config.GlobalBurstWindowMs, now)
-  INC.State.GlobalLastEmitMs = now   -- start the global min-interval clock at boot (no line in the first interval; sane `.inm status`)
-  INC.State.LocPacing = {}
-  -- Line/group cooldowns are per-player (stored on each PlayerTrack), not global.
+  -- All pacing is now per-player (on each PlayerTrack) + per-NPC (on each registry entry);
+  -- there is no global/location bucket state to initialise.
 
-  -- Cancel any prior heartbeat before creating a new one, so re-entering Boot inside
-  -- one Lua state can't leak a timer. (INC.schedulerEventId persists on INC, not on
-  -- the freshly-reset INC.State, precisely so it survives to be cancelled here.)
+  -- Cancel any prior heartbeat before creating a new one, so re-entering Boot inside one
+  -- Lua state can't leak a timer. (INC.schedulerEventId persists on INC, not on the
+  -- freshly-reset INC.State, precisely so it survives to be cancelled here.)
   if INC.schedulerEventId then RemoveEventById(INC.schedulerEventId) end
-  local tick = INC.Protect("scheduler.tick", function() attemptBody(false, nil) end)
-  INC.schedulerEventId = CreateLuaEvent(tick, INC.Config.SchedulerTickMs, 0)
+  local tickFn = INC.Protect("scheduler.tick", tick)
+  INC.schedulerEventId = CreateLuaEvent(tickFn, INC.Config.SchedulerTickMs, 0)
   INC.State.schedulerEventId = INC.schedulerEventId
 end

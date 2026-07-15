@@ -99,3 +99,31 @@ for a **server-console** command (`handler.IsConsole()`), which would have made
 fires **no login event** for connected players, so without TrackOnline they would stay
 invisible to the feature until relog. TrackOnline is a no-op at server startup (nobody
 online). Neither affects a normal full restart. Both are covered by integration tests.
+
+## ADR-010 — `min_player_level` line gate (2026-07-12)
+**Decision.** Add a `min_player_level` column to `immersive_npc_chat_line` (0 = no gate);
+`selectLine` requires `track.level >= line.minLevel`, nil-guarded on both sides.
+**Reason.** The Violet Hold guards must address only level-75+ champions ("safe travels,
+prepare well"). No existing mask expressed listener level. The player's level is captured
+on the track at login and refreshed on zone/area change. Default 0 keeps every existing
+line ungated. Fresh installs get the column from `inc_base.sql`; existing DBs get a
+guarded (MySQL-8-safe) `ALTER` migration.
+
+## ADR-011 — Per-player emission model, replacing the server-wide throttle (2026-07-14)
+**Decision.** Emission is paced **per player**, not per server. Each heartbeat the tick
+sweeps players in populated hubs and emits for every player whose personal cadence is due,
+up to `MaxEmitsPerTick`. A player is due immediately on entering a hub (arrival line), then
+their next line is delayed by an escalating `PlayerCadenceMs` gap (arrival → ~30s → ~2.5m →
+~5m → ~10m, last repeats), reset on arrival. The old global min-interval + global/location
+token buckets + `PopulationScaling` are removed; anti-repeat is now per-NPC (`NpcCooldownMs`,
+lowered) + per-player line/group cooldowns.
+**Reason.** The v1 model emitted at most **one line per tick for the whole server** behind a
+shared ~1-line/90s global bucket. With ~250 concurrent players (bots) that starved every
+individual — a player could stand in a hub for many minutes and hear nothing, because the
+single server-wide slot was almost always spent elsewhere. The owner's desired behaviour is
+inherently per-player ("greeted within seconds of arriving, then increasingly rare"), which a
+server-wide throttle cannot express. `MaxEmitsPerTick` + the escalating cadence bound total
+cost; a due player with no NPC in range is backed off by `RetryBackoffMs` so the sweep stays
+cheap. Covered by integration tests (multi-emit, escalation, arrival reset, budget).
+**Trade-off.** The per-city DB knobs `min_interval_ms` / `max_lines_per_10min` are no longer
+enforced (superseded by per-player cadence); the columns remain for compatibility.

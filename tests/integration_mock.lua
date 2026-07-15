@@ -224,6 +224,9 @@ ok(INC.Caches.ProfiledEntries[68] == true, "boot: entry 68 profiled")
 ok(INC.Caches.Stats.skipped >= 1, "boot: profile with unknown location_id skipped (aggregated, no crash)")
 ok(creatureEvents[68] and creatureEvents[68][36] and creatureEvents[68][37], "boot: ON_ADD/ON_REMOVE hooked for entry 68")
 ok(luaEvents[INC.schedulerEventId] ~= nil, "boot: heartbeat timer created")
+-- The per-player heartbeat body (v2). Captured once; schedulerEventId is stable (Boot
+-- runs once, .inm reload doesn't re-init the scheduler). Drives the ambient tests below.
+local tickFn = luaEvents[INC.schedulerEventId]
 
 -- ---- populate the world ----------------------------------------------------
 -- Warrior (class 1) human (race 1) Alliance (team 0), in the Test City zone.
@@ -269,8 +272,10 @@ ok(guard.lastSay == "Well met, human." or guard.lastWhisper == "Mind the guards,
    .. "' whisper='" .. tostring(guard.lastWhisper) .. "')")
 
 -- ---- cooldown blocks a forced repeat (TESTPLAN matrix 4) -------------------
+-- Force bypasses the player's own cadence, but the lone guard is now on its per-NPC
+-- cooldown, so a second immediate force finds no free NPC -> NPC_COOLDOWN.
 local r2 = INC.Scheduler.RunAttempt(true, 5)
-ok(r2 == "PLAYER_COOLDOWN", "cooldown: forced repeat blocked by player cooldown (got " .. r2 .. ")")
+ok(r2 == "NPC_COOLDOWN", "cooldown: forced repeat blocked by NPC cooldown (got " .. r2 .. ")")
 
 -- ---- cooldown clear restores ----------------------------------------------
 INC.Scheduler.ClearCooldowns()
@@ -426,10 +431,10 @@ guard.lastSay = nil; guard.lastWhisper = nil
 local r8 = INC.Scheduler.RunAttempt(true, 5)
 ok(r8 == "EMITTED", "reload: still emits after reload (got " .. r8 .. ")")
 
--- ---- ambient emission finds a guard-adjacent player among many far ones ----
--- The whole point of pickPlayerWithNpc: on a busy server most players aren't near a
--- guard. Add several far players in Stormwind; hero is the only one by the guard. An
--- ambient (non-forced) attempt must still emit, not waste the tick on a far player.
+-- ---- ambient tick greets the guard-adjacent player among many far ones -----
+-- On a busy server most players aren't near a guard. Add several far players in
+-- Stormwind; hero is the only one by the guard. The per-player tick must still emit
+-- for hero — the far players simply find no nearby NPC and are backed off, not served.
 do
   local far = {}
   for i = 1, 8 do
@@ -437,14 +442,11 @@ do
                           x = 5000 + i, y = 5000, z = 10, mapId = 0, zoneId = 1519, areaId = 0 })
     playerEvents[3](3, far[i])   -- all land in Stormwind (loc 1), far from the guard
   end
-  INC.Scheduler.ClearCooldowns()
+  INC.Scheduler.ClearCooldowns()   -- everyone due
   guard.lastSay = nil; guard.lastWhisper = nil
-  local emitted = false
-  for _ = 1, 5 do            -- a few ambient ticks (random order); should find hero quickly
-    if INC.Scheduler.RunAttempt(false, nil) == "EMITTED" then emitted = true; break end
-    INC.Scheduler.ClearCooldowns()
-  end
-  ok(emitted, "ambient: emits by finding the guard-adjacent player among 8 far players")
+  tickFn()
+  ok(guard.lastSay ~= nil or guard.lastWhisper ~= nil,
+     "ambient: the tick greets the guard-adjacent player among 8 far ones")
   for i = 1, 8 do playerEvents[4](4, far[i]) end  -- clean up
 end
 
@@ -516,7 +518,6 @@ end
 
 -- ---- heartbeat tick is safe to call and pcall-guarded ----------------------
 INC.Scheduler.ClearCooldowns()
-local tickFn = luaEvents[INC.schedulerEventId]
 local okCall = pcall(tickFn)
 ok(okCall, "heartbeat: tick function runs without error")
 
@@ -524,6 +525,67 @@ ok(okCall, "heartbeat: tick function runs without error")
 playerEvents[4](4, hero)  -- ON_LOGOUT
 ok(INC.State.PlayerTrack[5] == nil, "logout: player untracked")
 ok(INC.State.LocationState[1].count == 0, "logout: location count decremented")
+
+-- ---- per-player scheduler: multi-emit, escalation, arrival reset, budget ----
+-- The v2 model (ADR-011): the tick emits for EVERY due player (not one server-wide),
+-- each on their own escalating cadence, reset on arrival, bounded by MaxEmitsPerTick.
+do
+  INC.Config.NpcCooldownMs = 5000   -- keep the per-NPC anti-repeat below the clock advances below
+  local g1 = makeCreature({ entry = 68, guidLow = 2001, x = 600, y = 600, z = 10, mapId = 0, zoneId = 1519, areaId = 0 })
+  local g2 = makeCreature({ entry = 68, guidLow = 2002, x = 700, y = 700, z = 10, mapId = 0, zoneId = 1519, areaId = 0 })
+  creatureEvents[68][36](36, g1); creatureEvents[68][36](36, g2)
+  local pA = makePlayer({ guidLow = 20, name = "Ann", class = 1, race = 1, team = 0,
+    x = 601, y = 600, z = 10, mapId = 0, zoneId = 1519, areaId = 0, equip = { [15] = makeItem(2, 7, 21, 2) } })
+  local pB = makePlayer({ guidLow = 21, name = "Bea", class = 1, race = 1, team = 0,
+    x = 701, y = 700, z = 10, mapId = 0, zoneId = 1519, areaId = 0, equip = { [15] = makeItem(2, 7, 21, 2) } })
+  playerEvents[3](3, pA); playerEvents[3](3, pB)   -- login -> tracked, arrival -> due now
+
+  -- a guard may SAY or WHISPER depending which line wins, so count either.
+  local function spoke(c) return c.lastSay ~= nil or c.lastWhisper ~= nil end
+  local function clearSpoke(c) c.lastSay, c.lastWhisper = nil, nil end
+
+  clearSpoke(g1); clearSpoke(g2)
+  tickFn()
+  ok(spoke(g1) and spoke(g2), "tick: multi-emit — BOTH due players spoken to in ONE tick")
+  ok(INC.State.PlayerTrack[20].emitCount == 1, "tick: emitCount incremented after a line")
+
+  -- escalation: cadence pushes nextEligibleMs into the future -> immediate re-tick is silent
+  clearSpoke(g1); clearSpoke(g2)
+  tickFn()
+  ok(not spoke(g1) and not spoke(g2), "tick: escalating cadence blocks an immediate repeat")
+
+  -- advance past the first cadence gap (30000ms) AND the 5000ms NPC cooldown -> due again
+  CLOCK.sec = CLOCK.sec + 40
+  clearSpoke(g1)
+  tickFn()
+  ok(spoke(g1), "tick: player is due again once the cadence gap elapses")
+  ok(INC.State.PlayerTrack[20].emitCount == 2, "tick: cadence escalates (emitCount now 2)")
+
+  -- arrival reset: leave every hub, then return -> emitCount 0 + due immediately
+  pA.zoneId, pA.mapId = 1, 1; playerEvents[27](27, pA)
+  ok(INC.State.PlayerTrack[20].locationId == nil, "arrival: leaving a hub clears location")
+  pA.zoneId, pA.mapId = 1519, 0; playerEvents[27](27, pA)
+  ok(INC.State.PlayerTrack[20].emitCount == 0, "arrival: re-entering a hub resets emitCount")
+  -- pA has exhausted the 2-line test pool (real pools are large); free the per-line
+  -- anti-repeat cooldowns so the arrival actually has something fresh to say.
+  INC.Scheduler.ClearCooldowns()
+  clearSpoke(g1)
+  tickFn()
+  ok(spoke(g1), "arrival: a freshly-arrived player is greeted on the next tick")
+
+  -- budget: two due players, MaxEmitsPerTick=1 -> exactly one emits this tick
+  INC.Scheduler.ClearCooldowns()   -- both due, both guards free
+  INC.Config.MaxEmitsPerTick = 1
+  clearSpoke(g1); clearSpoke(g2)
+  tickFn()
+  local n = (spoke(g1) and 1 or 0) + (spoke(g2) and 1 or 0)
+  ok(n == 1, "tick: MaxEmitsPerTick budget respected (1 of 2 due emitted; got " .. n .. ")")
+  INC.Config.MaxEmitsPerTick = 25
+  INC.Config.NpcCooldownMs = 90000
+
+  playerEvents[4](4, pA); playerEvents[4](4, pB)
+  creatureEvents[68][37](37, g1); creatureEvents[68][37](37, g2)
+end
 
 -- ---- WORLD_EVENT_ON_UPDATE (13) must NEVER be registered (spec §13 DoD) -----
 ok(serverEvents[13] == nil, "no WORLD_EVENT_ON_UPDATE registration")

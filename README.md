@@ -54,18 +54,22 @@ config is `mod_ale.conf`.) Key values (all clamped on load):
 | Key | Default | Meaning |
 |---|---|---|
 | `Enable` | `true` | master switch |
-| `SchedulerTickMs` | 5000 | heartbeat period (≥1000) |
-| `GlobalMinIntervalMs` | 45000 | min gap between any two lines, server-wide |
-| `GlobalBurstMax` / `GlobalBurstWindowMs` | 2 / 180000 | global burst token bucket |
-| `LocationMinIntervalMs` | 120000 | min gap per location |
-| `LocationMaxLinesPer10Min` | 6 | hard per-location ceiling |
-| `PlayerCooldownMs` / `NpcCooldownMs` | 300000 / 600000 | per-player / per-NPC cooldown (≥30000) |
-| `LineCooldownMs` / `CooldownGroupMs` | 3600000 / 900000 | per-line / per-category cooldown |
-| `MaxCandidateSearchRadius` | 24.0 | candidate NPC pre-filter radius (5..60) |
+| `SchedulerTickMs` | 3000 | heartbeat period — how often the per-player sweep runs (≥1000) |
+| `PlayerCadenceMs` | `{30000,150000,300000,600000}` | **per-player** gap before a player's next line, escalating by how many they've heard this visit (last repeats). Arrival = due immediately. |
+| `RetryBackoffMs` | 4000 | a due player with no NPC in range yet is rechecked this soon |
+| `MaxEmitsPerTick` | 25 | emissions allowed per heartbeat (bounds a mass-arrival burst; 1..500) |
+| `NpcCooldownMs` | 90000 | an NPC won't speak again this soon (anti-repeat; ≥5000) |
+| `LineCooldownMs` / `CooldownGroupMs` | 1800000 / 600000 | per-player per-line / per-category anti-repeat |
+| `MaxCandidateSearchRadius` | 30.0 | candidate NPC pre-filter radius = "near an NPC" (5..60) |
 | `RequireLineOfSight` / `RequireNpcFacingPlayer` | false / false | extra final-validation gates |
-| `PopulationScaling` | on, 0.25→1.5/min | busier hubs talk a little more often (rate only) |
 | `AllowPersonalWhispers` | true | allow `chat_mode=1` whisper lines |
 | `Debug` | false | per-attempt trace logging |
+
+> **Pacing is per-player, not server-wide (ADR-011).** A player is greeted on arrival, then
+> hears lines on their own escalating cadence, so a hub with hundreds of players can greet them
+> all while each individual hears lines only rarely. Turn frequency up/down with `PlayerCadenceMs`;
+> `MaxEmitsPerTick` caps total load. (The old global/location throttles + `PopulationScaling` were
+> removed — the per-city `min_interval_ms`/`max_lines_per_10min` columns are no longer enforced.)
 
 ## Tables (world DB)
 

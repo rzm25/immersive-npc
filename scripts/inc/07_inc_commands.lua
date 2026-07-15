@@ -32,20 +32,22 @@ local function cmdStatus(player)
   reply(player, ("enabled=%s  debug=%s  tracked=%d  registryNPCs=%d")
     :format(tostring(cfg.Enable), tostring(cfg.Debug), trackedN, st.RegistryCount))
   local now = INC.NowMs()
-  local gTok = st.GlobalBucket and st.GlobalBucket.tokens or 0
-  reply(player, ("globalTokens=%.2f  sinceGlobalEmit=%ds")
-    :format(gTok, math.floor((now - (st.GlobalLastEmitMs or 0)) / 1000)))
+  reply(player, ("tick=%dms  emitBudget/tick=%d  cadence=%s")
+    :format(cfg.SchedulerTickMs, cfg.MaxEmitsPerTick, table.concat(cfg.PlayerCadenceMs, "/")))
+  -- Per-location: players present, and how many are DUE for a line right now (their
+  -- personal cadence has elapsed) — the live view of the per-player scheduler.
   for _, loc in ipairs(INC.Caches.LocationList) do
     local ls = st.LocationState[loc.id]
-    local pacing = st.LocPacing[loc.id]
-    local recent = 0
-    if pacing then
-      for i = 1, #pacing.emitTimes do
-        if now - pacing.emitTimes[i] < 600000 then recent = recent + 1 end
+    local players, due = 0, 0
+    if ls then
+      for guidLow in pairs(ls.players) do
+        players = players + 1
+        local t = st.PlayerTrack[guidLow]
+        if t and (t.nextEligibleMs or 0) <= now then due = due + 1 end
       end
     end
-    reply(player, ("  loc %d %-16s players=%d  lines/10min=%d")
-      :format(loc.id, loc.name, ls and ls.count or 0, recent))
+    reply(player, ("  loc %d %-16s players=%d  due=%d")
+      :format(loc.id, loc.name, players, due))
   end
 end
 

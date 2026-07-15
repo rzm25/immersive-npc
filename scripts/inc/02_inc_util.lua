@@ -14,7 +14,7 @@ INC.Util = INC.Util or {}
 local U = INC.Util
 
 local band, lshift = bit32.band, bit32.lshift
-local floor, log, min, max = math.floor, math.log, math.min, math.max
+local floor, min, max = math.floor, math.min, math.max
 
 -- ---------------------------------------------------------------------------
 -- Bit constants — defined ONCE here, mirrored as a comment block in the base SQL.
@@ -115,14 +115,6 @@ function U.Clamp(v, lo, hi)
   if lo and v < lo then return lo end
   if hi and v > hi then return hi end
   return v
-end
-
--- Population-scaled per-minute budget (spec §4.6):
---   clamp(base + log2(players+1) * scale, 0, cap)
-function U.PopulationPerMinute(players, base, scale, cap)
-  if players < 0 then players = 0 end
-  local v = base + (log(players + 1) / log(2)) * scale
-  return U.Clamp(v, 0, cap)
 end
 
 -- ---------------------------------------------------------------------------

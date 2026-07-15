@@ -82,6 +82,20 @@ GUARD=1 · CITIZEN=128 · OFFICIAL/EMISSARY=256 · CRIER=512 · **VENDOR=4** · 
   loaded out of order). Correct target is the **`immersive-npc/` subdir, whole set together**.
   Recorded in `/source` gotcha #15 and TRUTH_SOURCES.
 
+### 2026-07-14 — emission model rewrite (per-player)
+- **Item 3 RESOLVED (properly).** The "1 line / several minutes with 250 bots" was architectural,
+  not a knob: v1 emitted **one line per tick server-wide** behind a shared ~1/90s global bucket, so
+  individuals starved at scale. Rewrote to a **per-player** model (ADR-011): the tick emits for
+  every DUE player each heartbeat (up to `MaxEmitsPerTick`), each on an escalating personal cadence
+  (`PlayerCadenceMs` = arrival → 30s → 2.5m → 5m → 10m), **reset on hub arrival** so walking into
+  town greets you within seconds. Removed the global/location buckets + `PopulationScaling` +
+  `PopulationPerMinute`; anti-repeat is now per-NPC (`NpcCooldownMs` lowered to 90s) + per-player
+  line/group cooldowns. `.inm status` now shows tick/budget/cadence + per-location players & due
+  count. `.inm force` bypasses only the player's cadence (still honors NPC cooldown). Config keys
+  changed — the owner's skip-worktree'd `01_inc_config.lua` is defaulted by `ClampConfig` for the
+  new keys, so it keeps working; re-tune `PlayerCadenceMs`/`MaxEmitsPerTick` there. Tests: unit 64,
+  integration 67 (added multi-emit/escalation/arrival/budget).
+
 ### Content counts are STAGED
 Each new pool is seeded functional this session (so the NPCs speak), then filled to the requested
 target counts next. Owner can tune tone via `docs/CONTENT_LINES.md` before the pools are ballooned.

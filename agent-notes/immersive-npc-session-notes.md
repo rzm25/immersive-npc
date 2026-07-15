@@ -129,6 +129,31 @@ Owner ran the live server hard and gave a big feedback batch (logged in full in
 **Next:** fill each new pool to its target count; owner to run the eligibility SQL + content
 SQL, `.reload ale` (then a restart for full Dalaran/Darkshire registration), and re-test.
 
+## Session 4 (2026-07-14): per-player emission model (ADR-011)
+
+The owner reported that with **250 bots** online, standing in a hub produced almost no
+chatter — the v1 scheduler emitted at most **one line per tick server-wide** behind a shared
+global token bucket (~1 line/90s), so individuals starved at scale. No config value could fix
+a per-server ceiling. Rewrote the emission model to be **per-player** (ADR-011):
+
+- Every heartbeat, `tick()` sweeps players in populated hubs and calls `emitForPlayer` for each
+  whose personal cadence is due, up to `MaxEmitsPerTick`. A due player with no NPC in range is
+  backed off `RetryBackoffMs` (walk-up responsiveness without rescanning every tick).
+- Per-player escalating cadence `PlayerCadenceMs` (arrival → 30s → 2.5m → 5m → 10m, last repeats),
+  stored on the track as `emitCount` + `nextEligibleMs`, **reset on hub arrival**
+  (`05_inc_players.updateLocation`) so "walk into town" greets within seconds.
+- **Removed:** global min-interval + global/location token buckets + `PopulationScaling` +
+  `U.PopulationPerMinute`. Anti-repeat is now per-NPC (`NpcCooldownMs`, lowered to 90s) + per-player
+  line/group cooldowns. `selectLocation`/`pickPlayerWithNpc`/`attemptBody` deleted.
+- `.inm force` now bypasses only the player's cadence (still honors per-NPC cooldown). `.inm status`
+  shows tick/budget/cadence + per-location players/due counts.
+- Config keys changed; `ClampConfig` defaults the new keys so the owner's skip-worktree'd
+  `01_inc_config.lua` keeps working. Docs: ADR-010 (level gate) + ADR-011 added, README config
+  table rewritten. Tests: unit 64, integration 67 (multi-emit / escalation / arrival / budget).
+
+**Deploy note:** copy the whole `scripts/inc/` set into `lua_scripts/immersive-npc/` (gotcha #15 —
+one dir, whole set), restart, then tune `PlayerCadenceMs`/`MaxEmitsPerTick` in the deployed config.
+
 ### Handoff state / next steps (Session 2)
 - **Pushed** the module commit `60dfc9e` to `origin/main` (github.com/rzm25/immersive-npc).
   The CI workflow is a SEPARATE local commit `5558460` that could NOT be pushed — the

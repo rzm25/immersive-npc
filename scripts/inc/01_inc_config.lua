@@ -78,32 +78,29 @@ end
 INC.Config = {
   Enable = true,
 
-  -- Heartbeat / global pacing
-  SchedulerTickMs = 5000,            -- clamp >= 1000
-  GlobalMinIntervalMs = 45000,       -- clamp >= 10000
-  GlobalBurstMax = 2,                -- clamp 1..10
-  GlobalBurstWindowMs = 180000,      -- token-bucket refill window for the global gate
+  -- Heartbeat.
+  SchedulerTickMs = 3000,            -- clamp >= 1000 (how often the per-player sweep runs)
 
-  -- Per-location pacing DEFAULTS. NOTE: the authoritative per-city values are the
-  -- `min_interval_ms` / `max_lines_per_10min` columns on immersive_npc_chat_location
-  -- (edit those + `.inm reload` to tune a city). These two keys mirror the seed's DB
-  -- defaults for operator familiarity and are not enforced at runtime.
-  LocationMinIntervalMs = 120000,
-  LocationMaxLinesPer10Min = 6,
+  -- PER-PLAYER emission model (spec v2). Each player is paced INDIVIDUALLY, not the
+  -- server as a whole, so a busy hub can greet 250 arrivals while each of them still
+  -- hears a line only rarely. On entering a hub a player is due immediately (arrival
+  -- line); after each line their next line is delayed by an ESCALATING gap indexed by
+  -- how many they've already heard this visit (the last value repeats). So: line on
+  -- arrival, then ~30s, then ~2.5m, then ~5m, then ~10m — quieting a lingerer down.
+  PlayerCadenceMs = { 30000, 150000, 300000, 600000 },
+  RetryBackoffMs = 4000,             -- if a due player has no nearby speakable NPC yet, recheck this soon
+                                     -- (so "walk up to an NPC -> line within a few seconds")
+  MaxEmitsPerTick = 25,              -- hot-path budget: cap emissions per heartbeat (bounds mass-arrival cost)
 
-  -- Per-entity cooldowns (memory-only; reset on reload/restart — documented in README)
-  PlayerCooldownMs = 300000,         -- clamp >= 30000
-  NpcCooldownMs = 600000,            -- clamp >= 30000
-  LineCooldownMs = 3600000,
-  CooldownGroupMs = 900000,
+  -- Anti-repeat cooldowns (memory-only; reset on reload/restart).
+  NpcCooldownMs = 90000,             -- one NPC won't speak again this soon (kept low so a guard can greet a stream of passers-by)
+  LineCooldownMs = 1800000,          -- a given player won't hear the SAME line again this soon
+  CooldownGroupMs = 600000,          -- ...nor the same category (cooldown_group) this soon
 
   -- Candidate search / emission geometry
-  MaxCandidateSearchRadius = 24.0,   -- clamp 5..60
+  MaxCandidateSearchRadius = 30.0,   -- clamp 5..60 (how close counts as "near an NPC")
   RequireLineOfSight = false,
   RequireNpcFacingPlayer = false,
-
-  -- Population-scaled per-location budget (see 02_inc_util.PopulationPerMinute)
-  PopulationScaling = { Enable = true, BasePerMinute = 0.25, LogScale = 0.20, MaxPerMinute = 1.50 },
 
   -- Emission defaults
   DefaultChatMode = 0,               -- 0 say, 1 whisper, 2 emote
@@ -128,23 +125,22 @@ end
 -- engine (only reads/writes the config table), so the harness can exercise it.
 function INC.ClampConfig()
   local c = INC.Config
-  c.SchedulerTickMs        = clampNum(c.SchedulerTickMs, 1000, nil, 5000)
-  c.GlobalMinIntervalMs    = clampNum(c.GlobalMinIntervalMs, 10000, nil, 45000)
-  c.GlobalBurstMax         = clampNum(c.GlobalBurstMax, 1, 10, 2)
-  c.GlobalBurstWindowMs    = clampNum(c.GlobalBurstWindowMs, 1000, nil, 180000)
-  c.LocationMinIntervalMs  = clampNum(c.LocationMinIntervalMs, 1000, nil, 120000)
-  c.LocationMaxLinesPer10Min = clampNum(c.LocationMaxLinesPer10Min, 0, nil, 6)
-  c.PlayerCooldownMs       = clampNum(c.PlayerCooldownMs, 30000, nil, 300000)
-  c.NpcCooldownMs          = clampNum(c.NpcCooldownMs, 30000, nil, 600000)
-  c.LineCooldownMs         = clampNum(c.LineCooldownMs, 0, nil, 3600000)
-  c.CooldownGroupMs        = clampNum(c.CooldownGroupMs, 0, nil, 900000)
-  c.MaxCandidateSearchRadius = clampNum(c.MaxCandidateSearchRadius, 5.0, 60.0, 24.0)
+  c.SchedulerTickMs        = clampNum(c.SchedulerTickMs, 1000, nil, 3000)
+  c.RetryBackoffMs         = clampNum(c.RetryBackoffMs, 1000, nil, 4000)
+  c.MaxEmitsPerTick        = clampNum(c.MaxEmitsPerTick, 1, 500, 25)
+  c.NpcCooldownMs          = clampNum(c.NpcCooldownMs, 5000, nil, 90000)
+  c.LineCooldownMs         = clampNum(c.LineCooldownMs, 0, nil, 1800000)
+  c.CooldownGroupMs        = clampNum(c.CooldownGroupMs, 0, nil, 600000)
+  c.MaxCandidateSearchRadius = clampNum(c.MaxCandidateSearchRadius, 5.0, 60.0, 30.0)
 
-  local p = c.PopulationScaling
-  if type(p) == "table" then
-    p.BasePerMinute = clampNum(p.BasePerMinute, 0, nil, 0.25)
-    p.LogScale      = clampNum(p.LogScale, 0, nil, 0.20)
-    p.MaxPerMinute  = clampNum(p.MaxPerMinute, 0, nil, 1.50)
+  -- PlayerCadenceMs: ascending array of gap-ms between a player's successive lines.
+  -- Default if missing/empty (the operator's skip-worktree'd config may predate this
+  -- key); otherwise floor each entry at 0. Never mutate the engine here — pure table work.
+  local cad = c.PlayerCadenceMs
+  if type(cad) ~= "table" or #cad == 0 then
+    c.PlayerCadenceMs = { 30000, 150000, 300000, 600000 }
+  else
+    for i = 1, #cad do cad[i] = clampNum(cad[i], 0, nil, 30000) end
   end
 
   if c.DefaultChatMode ~= 0 and c.DefaultChatMode ~= 1 and c.DefaultChatMode ~= 2 then

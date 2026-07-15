@@ -98,13 +98,8 @@ do
   ok(true, "bucket: backwards clock handled without error")
 end
 
--- ---- population budget + clamp --------------------------------------------
+-- ---- clamp helper ----------------------------------------------------------
 do
-  eq(U.PopulationPerMinute(0, 0.25, 0.20, 1.5), 0.25, "pop: 0 players -> base")
-  local one = U.PopulationPerMinute(1, 0.25, 0.20, 1.5)
-  ok(math.abs(one - 0.45) < 1e-9, "pop: 1 player -> base + scale (log2(2)=1)")
-  eq(U.PopulationPerMinute(1000000, 0.25, 0.20, 1.5), 1.5, "pop: huge -> capped")
-  eq(U.PopulationPerMinute(-5, 0.25, 0.20, 1.5), 0.25, "pop: negative clamps players to 0")
   eq(U.Clamp(100, 5, 60), 60, "clamp high")
   eq(U.Clamp(1, 5, 60), 5, "clamp low")
   eq(U.Clamp(30, 5, 60), 30, "clamp mid")
@@ -147,17 +142,24 @@ do
   eq(t, "a", "truncate: does not split a UTF-8 sequence")
 end
 
--- ---- config clamp ----------------------------------------------------------
+-- ---- config clamp (per-player model) ---------------------------------------
 do
   INC.Config.SchedulerTickMs = 10
-  INC.Config.PlayerCooldownMs = 5
+  INC.Config.MaxEmitsPerTick = 9999
   INC.Config.MaxCandidateSearchRadius = 100
   INC.Config.DefaultChatMode = 9
+  INC.Config.PlayerCadenceMs = nil   -- operator config predating the key -> defaulted
   INC.ClampConfig()
   eq(INC.Config.SchedulerTickMs, 1000, "clamp: tick floor 1000")
-  eq(INC.Config.PlayerCooldownMs, 30000, "clamp: player cd floor 30000")
+  eq(INC.Config.MaxEmitsPerTick, 500, "clamp: emit budget ceil 500")
   eq(INC.Config.MaxCandidateSearchRadius, 60, "clamp: radius ceil 60")
   eq(INC.Config.DefaultChatMode, 0, "clamp: invalid chat mode -> 0")
+  ok(type(INC.Config.PlayerCadenceMs) == "table" and #INC.Config.PlayerCadenceMs >= 1,
+     "clamp: missing PlayerCadenceMs gets a default table (old config compat)")
+  -- an out-of-order/negative cadence entry is floored at 0, not dropped
+  INC.Config.PlayerCadenceMs = { 30000, -5 }
+  INC.ClampConfig()
+  eq(INC.Config.PlayerCadenceMs[2], 0, "clamp: negative cadence entry floored to 0")
 end
 
 -- ---- report ----------------------------------------------------------------

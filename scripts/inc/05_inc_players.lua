@@ -131,6 +131,11 @@ local function updateLocation(track, player)
   end
   track.locationId = newLoc
   if newLoc then
+    -- Arrival: a player who has just entered a hub is due for a line immediately, and
+    -- their escalating cadence restarts — so "walk into town after adventuring" greets
+    -- you within seconds, then quiets down the longer you linger (06_inc_scheduler).
+    track.emitCount = 0
+    track.nextEligibleMs = INC.NowMs()
     local ls = locState(newLoc)
     if not ls.players[track.guidLow] then
       ls.players[track.guidLow] = true
@@ -165,7 +170,8 @@ local function track(player)
     zoneId = player:GetZoneId(),
     areaId = player:GetAreaId(),
     locationId = nil,
-    cooldownUntil = 0,
+    emitCount = 0,        -- how many lines this player has heard THIS visit (escalates cadence)
+    nextEligibleMs = 0,   -- earliest ms this player may next hear a line (0 = due now)
     lineCd = {},    -- [lineId]  -> untilMs  (per-player; never blocks OTHER players)
     groupCd = {},   -- [group]   -> untilMs  (per-player)
   }
