@@ -25,8 +25,14 @@ Profiles are attached by `sql/world/updates/2026_07_12_00_eligibility.sql` (idem
 `comment LIKE 'inm-auto:%'` marker; derives entry from spawn guid via `creature.id1`).
 
 ## Config keys
-- Live in `scripts/inc/01_inc_config.lua` as `INC.Config` (no `.conf`). Clamped by `INC.ClampConfig()`.
-  Names mirror the C++ module's keys. Full list in [README.md](README.md#configuration).
+- Live in `scripts/inc/01_inc_config.lua` as `INC.Config` (no `.conf`). Clamped by `INC.ClampConfig()`
+  (which also **defaults any missing key**, so an operator config predating a schema change keeps
+  working). Full list in [README.md](README.md#configuration).
+- **Emission is PER-PLAYER (ADR-011), not server-wide.** Key knobs: `PlayerCadenceMs` (escalating
+  per-player gaps, arrival→30s→2.5m→5m→10m), `MaxEmitsPerTick` (per-tick emission budget),
+  `RetryBackoffMs`, `NpcCooldownMs`/`LineCooldownMs`/`CooldownGroupMs` (anti-repeat), `SchedulerTickMs`,
+  `MaxCandidateSearchRadius`. **Removed** (do not reference): `GlobalMinIntervalMs`, `GlobalBurst*`,
+  `LocationMinIntervalMs`, `LocationMaxLinesPer10Min`, `PlayerCooldownMs`, `PopulationScaling`.
 
 ## Seeded content (operator-tunable — verify with `sql/verify_ids.sql`)
 - **Locations 1–6:** Stormwind(zone 1519,map0) Ironforge(1537,0) Darnassus(1657,1) Orgrimmar(1637,1) ThunderBluff(1638,1) Undercity(1497,0).
@@ -37,19 +43,20 @@ Profiles are attached by `sql/world/updates/2026_07_12_00_eligibility.sql` (idem
 | File | Responsibility |
 |---|---|
 | `01_inc_config.lua` | `INC.Config`, `ClampConfig`, log shims (`Log/Warn/Err/DebugLog`), `Protect`/`ProtectRet` (pcall wrappers) |
-| `02_inc_util.lua` | **engine-free**: all bit constants, `Mask64*`/`MatchAny*/MatchAll64`, token bucket, `WeightedPick`, `PopulationPerMinute`, `ReplacePlaceholders`, `TruncateBytes` |
+| `02_inc_util.lua` | **engine-free**: all bit constants, `Mask64*`/`MatchAny*/MatchAll64`, token bucket, `WeightedPick`, `ReplacePlaceholders`, `TruncateBytes` |
 | `03_inc_data.lua` | `WorldDBQuery` loaders (ONLY here), validation+skip, prebuilt `LinesByLocation`/`NpcProfilesByEntry`, `Load()` (atomic-swap caches), `ResolveLocation`, `FindProfile` |
-| `04_inc_registry.lua` | per-entry ON_ADD/ON_REMOVE (36/37), `Registry[loc][guidLow]`, `RegistryIndex`, `Registry.Init/ForLocation` |
-| `05_inc_players.lua` | player events 3/4/27/47, `PlayerTrack`/`LocationState`, `ScanEquipment` (lazy 19-slot scan → tags+quality+weaponType) |
-| `06_inc_scheduler.lua` | `NowMs`, metrics, buckets, cooldowns, `attemptBody` pipeline, final validation, emission, `RunAttempt`, `ClearCooldowns`, heartbeat `CreateLuaEvent` |
+| `04_inc_registry.lua` | per-entry ON_ADD/ON_REMOVE (36/37), `Registry[loc][guidLow]`, `RegistryIndex`, `Registry.Init/ForLocation/SeedFromPlayers` (one grid-search per player). **Spatial-index upgrade planned: [docs/SPATIAL_INDEX_PLAN.md](docs/SPATIAL_INDEX_PLAN.md).** |
+| `05_inc_players.lua` | player events 3/4/27/47, `PlayerTrack` (`emitCount`/`nextEligibleMs`/`level`, reset on hub arrival)/`LocationState`, `ScanEquipment` (lazy 19-slot scan → tags+quality+weaponType) |
+| `06_inc_scheduler.lua` | `NowMs`, metrics, **per-player** cadence + anti-repeat cooldowns, `emitForPlayer`, `tick` (multi-emit sweep, `MaxEmitsPerTick`), final validation, `RunAttempt` (force), `ClearCooldowns`, heartbeat `CreateLuaEvent` |
 | `07_inc_commands.lua` | `.inm` command set via event 42 |
 | `08_inc_main.lua` | `INC.Boot()` (wire everything, boot summary), `INC.Reload()`, config-load survival (9), state-close cleanup (16) |
 
 ## Runtime state (all under `INC.State`, memory-only, reset on script reload)
-`Registry` / `RegistryIndex` / `RegistryCount`; `PlayerTrack` / `LocationState`;
-`Metrics`; `GlobalBucket` / `GlobalLastEmitMs`; `LocPacing[loc]` (bucket + emit ring);
-`LineCooldown[id]` / `GroupCooldown[group]`; `schedulerEventId`. Persistent on `INC`:
-`schedulerEventId` (for teardown), `Caches` (immutable, swapped whole on reload).
+`Registry[loc][guidLow]` / `RegistryIndex` / `RegistryCount`; `PlayerTrack[guidLow]` (per-player
+`emitCount`/`nextEligibleMs`/`level`/`lineCd`/`groupCd`) / `LocationState[loc]` (players set + count);
+`Metrics`; `schedulerEventId`. **No global/location pacing state** (ADR-011 removed `GlobalBucket`/
+`GlobalLastEmitMs`/`LocPacing`). Persistent on `INC`: `schedulerEventId` (for teardown), `Caches`
+(immutable, swapped whole on reload).
 
 ## Tooling
 - `tools/check_sql.py` (+ `check_sql_selftest.py`) — structural SQL checker, negative-tested (no `mysql` in sandbox).
