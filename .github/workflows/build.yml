@@ -1,0 +1,142 @@
+# CI for lua-immersive-npc-chat — an ALE (azerothcore/mod-ale) *Lua* module.
+#
+# There is no C++ in this repo and no loader symbol, so — unlike the org's C++ module
+# template (mod-town-boards / mod-dmn-events build.yml) — there is deliberately NO
+# `build` job. Deployment stays exactly as documented in README.md: copy the contents
+# of scripts/inc/ into ALE's script directory. CI never deploys anything.
+#
+# Jobs (mirroring the org pattern, scoped to what this repo contains):
+#   static-guards-and-tests — luacheck (no implicit globals, spec §11), the pure-Lua
+#                             unit tests, and the offline mock-engine integration harness,
+#                             all under standalone Lua 5.2 (the ALE runtime version).
+#   sql                     — the structural SQL checker (and its negative self-test),
+#                             then a real apply of schema + seeds into a DISPOSABLE MySQL 8.0
+#                             loaded with the AzerothCore base world schema (some seeds
+#                             SELECT from `creature` / `creature_template`), applied twice
+#                             to prove the seeds are idempotent.
+#
+# Public repo: no secrets are used; actions are pinned to full commit SHAs; the token is
+# read-only.
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AC_REPO: azerothcore/azerothcore-wotlk
+  # Pinned AzerothCore commit for the base world schema. Locally verified 2026-10-04:
+  # base world import + inc_base.sql + all updates (applied twice) succeed against it.
+  AC_REF: a65025872971271b497aa0396a678adbee6def0a
+  LUACHECK_VERSION: 1.2.0-1
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-guards-and-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout this module
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # luarocks on Ubuntu defaults to a different Lua; force 5.2 or the luacheck build
+      # fails with "Lua header mismatches configured version".
+      - name: Install Lua 5.2 + luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.2 liblua5.2-dev luarocks
+          luarocks --lua-version 5.2 --local install luacheck "$LUACHECK_VERSION"
+          echo "$HOME/.luarocks/bin" >> "$GITHUB_PATH"
+
+      - name: luacheck (forbids implicit globals — spec §11)
+        run: |
+          luacheck --version
+          luacheck scripts/inc tests .luacheckrc
+
+      - name: Unit tests (pure Lua)
+        run: lua5.2 tests/run_tests.lua
+
+      - name: Integration harness (mock engine)
+        run: lua5.2 tests/integration_mock.lua
+
+  sql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: [ "3306:3306" ]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - name: Checkout this module
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: module
+
+      - name: Checkout AzerothCore (base world schema only)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.AC_REPO }}
+          ref: ${{ env.AC_REF }}
+          path: ac
+          sparse-checkout: data/sql/base/db_world
+
+      - name: SQL structural self-test (the linter must be able to fail)
+        working-directory: module
+        run: python3 tools/check_sql_selftest.py
+
+      - name: SQL structural check (schema + seeds)
+        working-directory: module
+        run: python3 tools/check_sql.py sql/world/base/*.sql sql/world/updates/*.sql
+
+      - name: Create world database
+        run: mysql -h127.0.0.1 -uroot -proot -e "CREATE DATABASE acore_world DEFAULT CHARSET utf8mb4;"
+
+      - name: Import AzerothCore base world schema
+        run: |
+          for f in ac/data/sql/base/db_world/*.sql; do
+            mysql -h127.0.0.1 -uroot -proot acore_world < "$f"
+          done
+
+      - name: Apply this module's SQL (base, then updates in filename order)
+        working-directory: module
+        run: |
+          set -e
+          echo "== sql/world/base/inc_base.sql"
+          mysql -h127.0.0.1 -uroot -proot acore_world < sql/world/base/inc_base.sql
+          for f in sql/world/updates/*.sql; do
+            echo "== $f"
+            mysql -h127.0.0.1 -uroot -proot acore_world < "$f"
+          done
+
+      - name: Re-apply updates (seeds must be idempotent) and compare row counts
+        working-directory: module
+        run: |
+          set -e
+          counts() {
+            mysql -h127.0.0.1 -uroot -proot acore_world -N -e "
+              SELECT (SELECT COUNT(*) FROM immersive_npc_chat_location),
+                     (SELECT COUNT(*) FROM immersive_npc_chat_npc_profile),
+                     (SELECT COUNT(*) FROM immersive_npc_chat_line);"
+          }
+          before="$(counts)"
+          for f in sql/world/updates/*.sql; do
+            echo "== reapply $f"
+            mysql -h127.0.0.1 -uroot -proot acore_world < "$f"
+          done
+          after="$(counts)"
+          echo "locations/profiles/lines before: $before"
+          echo "locations/profiles/lines after:  $after"
+          test "$before" = "$after"
